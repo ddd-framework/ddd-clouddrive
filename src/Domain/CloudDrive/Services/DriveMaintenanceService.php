@@ -50,6 +50,7 @@ class DriveMaintenanceService extends Service
                 ...$this->purgeExpiredTrash($isDryRun),
                 ...$this->purgeVersionsBeyondRetention($isDryRun),
                 ...$this->rescanFailedScans($isDryRun),
+                ...$this->reingestStaleVersions($isDryRun),
                 ...$this->sweepBlobs($isDryRun),
             ];
         } finally {
@@ -169,6 +170,42 @@ class DriveMaintenanceService extends Service
                 $resultLines[] = sprintf('scanned blob %d again: %s', (int)$failedBlob->id, $this->getDriveVersionsService()->rescanBlob($failedBlob));
             } catch (Throwable $throwable) {
                 $resultLines[] = sprintf('blob %d could not be scanned again: %s', (int)$failedBlob->id, $throwable->getMessage());
+            }
+        }
+        return $resultLines;
+    }
+
+    /**
+     * Redoes the ingest of versions whose blob still waits (PENDING or STAGED) longer than `staleIngestMinutes`: a worker
+     * run that was lost (retries exhausted, a crash). Runs the ingest here, not in a worker.
+     *
+     * @return string[]
+     */
+    public function reingestStaleVersions(bool $isDryRun): array
+    {
+        $staleMinutes = max(1, (int)(Config::get('CloudDrive.settings.staleIngestMinutes') ?? 15));
+        $repoClass = new DBDriveFileVersions();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $blobModel = DBDriveBlob::BASE_ORM_MODEL;
+        $queryBuilder->andWhere("{$alias}.driveBlobId IN (SELECT staleBlob.id FROM {$blobModel} staleBlob WHERE staleBlob.state IN (:waitingStates) AND staleBlob.updated < :staleBefore)")
+            ->setParameter('waitingStates', [DriveBlob::STATE_PENDING, DriveBlob::STATE_STAGED])
+            ->setParameter('staleBefore', DateTime::fromTimestamp(time() - $staleMinutes * 60)->format('Y-m-d H:i:s'))
+            ->orderBy("{$alias}.id", 'ASC')
+            ->setMaxResults(self::BATCH_SIZE);
+        $staleVersions = $repoClass->find($queryBuilder, false);
+        $resultLines = [];
+        foreach (($staleVersions instanceof DriveFileVersions ? $staleVersions->getElements() : []) as $staleVersion) {
+            if ($isDryRun) {
+                $resultLines[] = sprintf('would ingest version %d of node %d again (waiting over %d minutes)', (int)$staleVersion->id, (int)$staleVersion->driveNodeId, $staleMinutes);
+                continue;
+            }
+            try {
+                $staleNode = $this->getDriveNodesService()->find((int)$staleVersion->driveNodeId, false);
+                $this->getDriveVersionsService()->ingestVersion($staleVersion, !($staleNode instanceof DriveNode && $staleNode->isSystem), null, false);
+                $resultLines[] = sprintf('ingested version %d of node %d again', (int)$staleVersion->id, (int)$staleVersion->driveNodeId);
+            } catch (Throwable $throwable) {
+                $resultLines[] = sprintf('version %d could not be ingested again: %s', (int)$staleVersion->id, $throwable->getMessage());
             }
         }
         return $resultLines;

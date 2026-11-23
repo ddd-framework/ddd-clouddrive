@@ -14,12 +14,14 @@ use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWriteResult;
+use DDD\Domain\CloudDrive\MessageHandlers\DriveIngestVersionMessage;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersions;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
+use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
@@ -136,6 +138,22 @@ class DriveVersionsService extends EntitiesService
     }
 
     /**
+     * The ingest of a new version: in a worker when `CloudDrive.settings.asyncIngest` is on (or `$async` says so) —
+     * {@see DriveIngestVersionMessage} on the transport `drive_ingest` — else right here. Every write path (upload,
+     * working copy commit, copy) goes through it; a lost worker run is redone by the maintenance.
+     *
+     * @throws InternalErrorException
+     */
+    public function ingestVersion(DriveFileVersion $driveFileVersion, bool $isScanned = true, ?string $workingCopyKey = null, ?bool $async = null): void
+    {
+        if ($async ?? (bool)Config::get('CloudDrive.settings.asyncIngest')) {
+            (new DriveIngestVersionMessage((int)$driveFileVersion->id, $isScanned, $workingCopyKey))->dispatch();
+            return;
+        }
+        $this->ingestAndReleaseVersion($driveFileVersion, $isScanned, $workingCopyKey);
+    }
+
+    /**
      * Runs the ingest of a new version's blob and releases the version (synchronously; a host may move it to a
      * worker). A file in a system folder is not scanned.
      *
@@ -165,7 +183,7 @@ class DriveVersionsService extends EntitiesService
      * @throws BadRequestException
      * @throws InternalErrorException
      */
-    public function writeUploadedFile(DriveBlob $driveBlob, DriveNode $folderNode, string $name, ?string $comment, ?int $expectedLatestVersionId, bool $replaceExisting): DriveFileWriteResult
+    public function writeUploadedFile(DriveBlob $driveBlob, DriveNode $folderNode, string $name, ?string $comment, ?int $expectedLatestVersionId, bool $replaceExisting, ?bool $asyncIngest = null): DriveFileWriteResult
     {
         $driveSpace = $this->getDriveSpacesService()->requireSpaceWithRight((int)$folderNode->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         if (!$folderNode->isFolder() || $driveBlob->driveSpaceId !== $folderNode->driveSpaceId) {
@@ -183,7 +201,7 @@ class DriveVersionsService extends EntitiesService
         $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
         $driveFileWriteResult = $this->writeFile($driveSpace, $folderNode, $name, $driveFileWrite);
         if ($driveFileWriteResult->driveFileVersion !== null) {
-            $this->ingestAndReleaseVersion($driveFileWriteResult->driveFileVersion, !(bool)$folderNode->isSystem);
+            $this->ingestVersion($driveFileWriteResult->driveFileVersion, !(bool)$folderNode->isSystem, null, $asyncIngest);
             $freshNode = $this->getDriveNodesService()->find((int)$driveFileWriteResult->driveNode->id, false);
             $driveFileWriteResult->driveNode = $freshNode instanceof DriveNode ? $freshNode : $driveFileWriteResult->driveNode;
         }
@@ -239,7 +257,8 @@ class DriveVersionsService extends EntitiesService
             $this->getDriveBlobsService()->getObjectStorage()->putObjectIfAbsent((string)$driveBlob->storageKey, $content, $contentType);
         }
         $existingNode = $this->getDriveNodesService()->findChildByName($folderNode, $fileName);
-        return $this->writeUploadedFile($driveBlob, $folderNode, $fileName, $comment, $existingNode?->latestVersionId, $existingNode !== null);
+        // the content is wanted at once (a seed): its ingest runs here
+        return $this->writeUploadedFile($driveBlob, $folderNode, $fileName, $comment, $existingNode?->latestVersionId, $existingNode !== null, false);
     }
 
     /** The versions of a file, newest first */

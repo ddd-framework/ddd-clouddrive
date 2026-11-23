@@ -174,7 +174,7 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                     continue;
                 }
                 if ($driveFileWriteResult->driveFileVersion !== null) {
-                    $this->getDriveVersionsService()->ingestAndReleaseVersion($driveFileWriteResult->driveFileVersion, !(bool)$targetFolderNode->isSystem);
+                    $this->getDriveVersionsService()->ingestVersion($driveFileWriteResult->driveFileVersion, !(bool)$targetFolderNode->isSystem);
                 }
                 $savedNode = $this->getDriveNodesService()->find((int)$driveFileWriteResult->driveNode->id, false) ?? $driveFileWriteResult->driveNode;
                 $agentDriveFile = $this->buildAgentDriveFile($targetMount, $savedNode);

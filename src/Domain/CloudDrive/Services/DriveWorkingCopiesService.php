@@ -461,7 +461,7 @@ class DriveWorkingCopiesService extends EntitiesService
         }
         if ($driveFileWriteResult->driveFileVersion !== null) {
             $isScanned = !($driveFileWriteResult->driveNode?->isSystem ?? false);
-            $this->getDriveVersionsService()->ingestAndReleaseVersion($driveFileWriteResult->driveFileVersion, $isScanned, $driveWorkingCopy->workingCopyKey);
+            $this->getDriveVersionsService()->ingestVersion($driveFileWriteResult->driveFileVersion, $isScanned, $driveWorkingCopy->workingCopyKey);
         } elseif ($driveFileWriteResult->isUnchanged && $stagedBlob->state !== DriveBlob::STATE_RELEASED) {
             $this->getDriveBlobsService()->markForPurge($stagedBlob);
         }

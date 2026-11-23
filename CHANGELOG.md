@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-rc.7
+
+- Added: async ingest. Every write path (upload completion, working copy commit, copy into a space) goes through
+  `DriveVersionsService::ingestVersion(version, isScanned, workingCopyKey, ?async)`: with the setting
+  `CloudDrive.settings.asyncIngest` (default false) it dispatches `DriveIngestVersionMessage` to the transport
+  `drive_ingest` (`DriveIngestVersionHandler`; the host routes it and gives it a consumer), else it ingests inline. A
+  seed (`writeFileContent()`) always ingests inline.
+- Added: `app:drive:maintain` redoes the ingest of versions whose blob waits PENDING or STAGED longer than
+  `staleIngestMinutes` (default 15): a lost worker run (`DriveMaintenanceService::reingestStaleVersions()`).
+
 ## 0.1.0-rc.6
 
 - Added: `DriveWorkingCopyListener` (tag `clouddrive.working_copy_listener`) for a host with a live sandbox:

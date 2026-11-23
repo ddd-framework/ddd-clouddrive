@@ -44,7 +44,10 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs. It is a POST
    (the references are a body) but only reads: a host write guard that classifies routes by method lets it through
    like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links.
-5. A cron for `app:drive:maintain` (hourly): system-folder expiry, trash and version retention, the blob sweep.
+5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
+   failed scans and lost ingests again, the blob sweep. A scan takes seconds (clamscan loads its signatures each
+   time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
+   `drive_ingest` and give it a consumer (worker list).
 6. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts, and
    `findWorkingCopyKeyOfCall()` when the sandbox's workspace key is not on every call; without a key the tools use the
    own drive's newest working copy) and bind the skill in `config/app/AI/skillPackages.php`:
