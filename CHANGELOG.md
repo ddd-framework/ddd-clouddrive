@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0
+
+- First regular release (no more release candidates): Composer and npm `@mgamadeus/ddd-clouddrive` in lockstep, npm
+  dist-tag `latest`. Content as 0.1.0-rc.22. From here on: patch for fixes, minor for features and, before 1.0,
+  breaking changes.
+
 ## 0.1.0-rc.22
 
 - First npm publication of `@mgamadeus/ddd-clouddrive` through trusted publishing (rc.21 reached Packagist only); no
