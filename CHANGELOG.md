@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-rc.17
+
+- Fixed (API schema): `DriveSpace::$account` carries `HideProperty` and the OpenAPI `Ignore`, so the host's Account
+  entity no longer enters a drive response or the generated schema (`accountId` stays). It used to pull the host's full
+  account schema into every API that returns a space or a node with its space. A test keeps every lazy relation of a
+  drive entity to a non-drive entity hidden and ignored.
+- Docs: the `DriveSpace` class comment no longer describes the unsupported same-path subclass.
+
 ## 0.1.0-rc.16
 
 - Added (rights): `DriveSpaceRightsExtension` (tag `clouddrive.space_rights_extension`, autoconfigured, any number),

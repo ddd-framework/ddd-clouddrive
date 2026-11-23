@@ -16,15 +16,18 @@ use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\Common\Entities\Accounts\Account;
 use DDD\Infrastructure\Libs\Config;
+use DDD\Infrastructure\Traits\Serializer\Attributes\HideProperty;
+use DDD\Presentation\Base\OpenApi\Attributes\Ignore;
 use Symfony\Component\Validator\Constraints\Choice;
 use Symfony\Component\Validator\Constraints\Length;
 use Symfony\Component\Validator\Constraints\NotNull;
 
 /**
- * One drive: a tree of folders and versioned files with one audience, fixed at creation. A host extends the class at
- * the same path with typed anchor columns (an agent space, a customer) and its repository answers who may read,
- * write and manage a space ({@see DBDriveSpace}); every drive table is filtered through it. A space without an anchor
- * is a library. `spaceKind` selects the defaults of `CloudDrive.spaceKinds` and decides no right.
+ * One drive: a tree of folders and versioned files with one audience, fixed at creation. Who may read, write and
+ * manage a space is answered by {@see DBDriveSpace} and the host's DriveSpaceRightsExtension implementations; every
+ * drive table is filtered through it. A host does NOT subclass this class (unsupported: a second Doctrine model on the
+ * same table); it links its own records to a space in a table of its own (`driveSpaceId`). `spaceKind` selects the
+ * defaults of `CloudDrive.spaceKinds` and decides no right.
  */
 #[LazyLoadRepo(LazyLoadRepo::DB, DBDriveSpace::class)]
 class DriveSpace extends Entity
@@ -41,7 +44,10 @@ class DriveSpace extends Entity
     /** @var int|null Optional owner; decides no right and may change */
     public ?int $accountId = null;
 
+    /** @var Account|null The owner as the host's account entity: never serialized, never part of the API schema (the host's account shape is not the drive's contract; `accountId` is) */
     #[LazyLoad(addAsParent: true)]
+    #[HideProperty]
+    #[Ignore]
     public ?Account $account;
 
     /** @var string Selects the defaults of `CloudDrive.spaceKinds` (quota, largest file, retention) */
