@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-rc.8
+
+- Fixed: the maintenance measured a waiting blob's age (lost ingest) and a system-folder file's age (expiry) by
+  `updated`, which partial writes never stamp: such rows never matched, so a lost ingest stayed "pending scan" forever.
+  Both now use `COALESCE(updated, created)`; the newest working copy is chosen the same way.
+
 ## 0.1.0-rc.7
 
 - Added: async ingest. Every write path (upload completion, working copy commit, copy into a space) goes through

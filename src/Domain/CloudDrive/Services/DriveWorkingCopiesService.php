@@ -88,7 +88,7 @@ class DriveWorkingCopiesService extends EntitiesService
         $alias = $repoClass::getBaseModelAlias();
         $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
             ->setParameter('driveSpaceId', (int)$driveSpace->id)
-            ->orderBy("{$alias}.updated", 'DESC')
+            ->orderBy("COALESCE({$alias}.updated, {$alias}.created)", 'DESC')
             ->addOrderBy("{$alias}.id", 'DESC')
             ->setMaxResults(1);
         $driveWorkingCopy = $repoClass->find($queryBuilder, false);

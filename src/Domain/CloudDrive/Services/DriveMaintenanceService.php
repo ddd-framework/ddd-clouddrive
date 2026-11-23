@@ -76,7 +76,7 @@ class DriveMaintenanceService extends Service
         $queryBuilder->andWhere("{$alias}.isSystem = :isSystem")
             ->andWhere("{$alias}.nodeType = :nodeType")
             ->andWhere("{$alias}.trashedAt IS NULL")
-            ->andWhere("{$alias}.updated < :expiredBefore")
+            ->andWhere("COALESCE({$alias}.updated, {$alias}.created) < :expiredBefore")
             ->setParameter('isSystem', true)
             ->setParameter('nodeType', DriveNode::NODE_TYPE_FILE)
             ->setParameter('expiredBefore', DateTime::fromTimestamp(time() - $expiryDays * 86400)->format('Y-m-d H:i:s'))
@@ -177,7 +177,9 @@ class DriveMaintenanceService extends Service
 
     /**
      * Redoes the ingest of versions whose blob still waits (PENDING or STAGED) longer than `staleIngestMinutes`: a worker
-     * run that was lost (retries exhausted, a crash). Runs the ingest here, not in a worker.
+     * run that was lost (retries exhausted, a crash). Runs the ingest here, not in a worker. The age is the blob's last
+     * change, or its creation when no change was stamped (partial writes leave `updated` empty); a second ingest is
+     * harmless.
      *
      * @return string[]
      */
@@ -188,7 +190,7 @@ class DriveMaintenanceService extends Service
         $queryBuilder = $repoClass::createQueryBuilder(true);
         $alias = $repoClass::getBaseModelAlias();
         $blobModel = DBDriveBlob::BASE_ORM_MODEL;
-        $queryBuilder->andWhere("{$alias}.driveBlobId IN (SELECT staleBlob.id FROM {$blobModel} staleBlob WHERE staleBlob.state IN (:waitingStates) AND staleBlob.updated < :staleBefore)")
+        $queryBuilder->andWhere("{$alias}.driveBlobId IN (SELECT staleBlob.id FROM {$blobModel} staleBlob WHERE staleBlob.state IN (:waitingStates) AND COALESCE(staleBlob.updated, staleBlob.created) < :staleBefore)")
             ->setParameter('waitingStates', [DriveBlob::STATE_PENDING, DriveBlob::STATE_STAGED])
             ->setParameter('staleBefore', DateTime::fromTimestamp(time() - $staleMinutes * 60)->format('Y-m-d H:i:s'))
             ->orderBy("{$alias}.id", 'ASC')
