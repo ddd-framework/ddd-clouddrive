@@ -68,7 +68,9 @@ class DriveContentGrantsService extends Service
 
     /**
      * The content URL of an unreleased blob for the working copy that holds it: a staged blob of one of its entries,
-     * or the blob of a version in its space. Needs the write right on the space.
+     * or the blob of a version in its space. Needs the write right on the space. A blob the scan found malware in
+     * (BLOCKED) is never restored; one whose scan could not run (SCAN_FAILED) is, into the sandbox only — its bytes came
+     * from there, and people still cannot read it.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -79,7 +81,7 @@ class DriveContentGrantsService extends Service
         $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveWorkingCopy->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $driveBlob = $this->getDriveBlobsService()->find($driveBlobId, false);
         if (!$driveBlob instanceof DriveBlob || $driveBlob->driveSpaceId !== $driveWorkingCopy->driveSpaceId
-            || in_array($driveBlob->state, [DriveBlob::STATE_UPLOADING, DriveBlob::STATE_PURGING, DriveBlob::STATE_FAILED], true)
+            || in_array($driveBlob->state, [DriveBlob::STATE_UPLOADING, DriveBlob::STATE_PURGING, DriveBlob::STATE_FAILED, DriveBlob::STATE_BLOCKED], true)
         ) {
             throw new NotFoundException(sprintf('Blob %d is not restorable into this working copy.', $driveBlobId));
         }

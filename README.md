@@ -45,8 +45,11 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    (the references are a body) but only reads: a host write guard that classifies routes by method lets it through
    like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links.
 5. A cron for `app:drive:maintain` (hourly): system-folder expiry, trash and version retention, the blob sweep.
-6. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts) and bind the
-   skill in `config/app/AI/skillPackages.php`: `'Assistant.Drive' => ['clouddrive', 'agent.drive']`.
+6. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts, and
+   `findWorkingCopyKeyOfCall()` when the sandbox's workspace key is not on every call; without a key the tools use the
+   own drive's newest working copy) and bind the skill in `config/app/AI/skillPackages.php`:
+   `'Assistant.Drive' => ['clouddrive', 'agent.drive']`. A working copy entry's `conversationKey` is the id of the
+   delegation tree's root conversation.
 
 `app:drive:spaces:create` creates a library space.
 

@@ -126,7 +126,7 @@ class CloudDriveMCPPackage extends MCPPackage
             mb_substr($message, 0, 2000),
             $requestDto->paths !== [] ? array_values(array_map('strval', $requestDto->paths)) : null,
             $this->parseResolutions($requestDto->resolve),
-            $requestDto->paths === [] && isset($callProvenance->conversation?->id) ? (string)$callProvenance->conversation->id : null
+            $requestDto->paths === [] && isset($callProvenance->conversation?->id) ? (string)$callProvenance->conversation->getTreeRootConversationId() : null
         );
         return DriveMcpResponseDto::withLines(explode("\n", $driveCommitResult->buildSummaryLine()));
     }
@@ -424,11 +424,11 @@ class CloudDriveMCPPackage extends MCPPackage
         ));
     }
 
-    /** The working copy of the own drive for the call's sandbox; null without own drive or workspace key */
+    /** The working copy of the own drive for the call's sandbox (the resolver's key, else the newest one); null without own drive */
     protected function findOwnWorkingCopy(AgentDriveMounts $agentDriveMounts, AgentToolCallProvenance $callProvenance): ?DriveWorkingCopy
     {
         $ownDriveMount = $agentDriveMounts->findOwnDrive();
-        if ($ownDriveMount === null || $ownDriveMount->storeName !== CloudDriveAgentDriveStoreService::STORE_NAME || $callProvenance->workspaceKey === null) {
+        if ($ownDriveMount === null || $ownDriveMount->storeName !== CloudDriveAgentDriveStoreService::STORE_NAME) {
             return null;
         }
         /** @var DriveSpacesService $driveSpacesService */
@@ -437,9 +437,9 @@ class CloudDriveMCPPackage extends MCPPackage
         if (!$driveSpace instanceof DriveSpace) {
             return null;
         }
-        /** @var DriveWorkingCopiesService $driveWorkingCopiesService */
-        $driveWorkingCopiesService = DDDService::instance()->getService(DriveWorkingCopiesService::class);
-        return $driveWorkingCopiesService->findOrCreateWorkingCopy($driveSpace, $callProvenance->workspaceKey);
+        /** @var CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService */
+        $cloudDriveAgentDriveStoreService = DDDService::instance()->getService(CloudDriveAgentDriveStoreService::class);
+        return $cloudDriveAgentDriveStoreService->findOwnWorkingCopyOfCall($callProvenance, $driveSpace);
     }
 
     /**

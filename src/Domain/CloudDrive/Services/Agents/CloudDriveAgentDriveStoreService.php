@@ -17,6 +17,7 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
+use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
@@ -127,7 +128,11 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             try {
                 $sourceMount = $this->requireMount($sourcePath);
                 $sourceSpace = $this->requireSpaceOfMount($sourceMount);
-                $this->commitUncommittedSource($callProvenance, $sourceMount, $sourceSpace, $sourcePath);
+                $commitRefusal = $this->commitUncommittedSource($callProvenance, $sourceMount, $sourceSpace, $sourcePath);
+                if ($commitRefusal !== null) {
+                    $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': ' . $commitRefusal;
+                    continue;
+                }
                 $sourceNode = $this->findNodeOfPath($sourceSpace, $sourcePath);
                 if ($sourceNode === null || !$sourceNode->isFile() || $sourceNode->latestVersionId === null) {
                     $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': no file of the drive (commit it first, or check the path)';
@@ -150,7 +155,7 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
                 $driveFileWrite->copiedFromNodeId = (int)$sourceNode->id;
                 $driveFileWrite->copiedFromVersionId = (int)$sourceVersion->id;
-                $driveFileWrite->workingCopyKey = $targetMount->isOwnDrive ? $callProvenance->workspaceKey : null;
+                $driveFileWrite->workingCopyKey = $targetMount->isOwnDrive ? $this->findOwnWorkingCopyOfCall($callProvenance, $targetSpace)?->workingCopyKey : null;
                 $driveFileWriteResult = $this->getDriveVersionsService()->writeFile($targetSpace, $targetFolderNode, (string)$sourceNode->name, $driveFileWrite);
                 if ($driveFileWriteResult->isConflict || $driveFileWriteResult->driveNode === null) {
                     $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': ' . ($driveFileWriteResult->conflictReason ?? 'not written');
@@ -230,22 +235,41 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
     }
 
     /**
-     * A source of the own drive with a saved, uncommitted change is committed first, so the copy carries what the
-     * sandbox holds now.
+     * The working copy of the call's sandbox on the own drive space: by the resolver's key (created on first use), else
+     * the space's newest working copy; null without one.
      */
-    protected function commitUncommittedSource(AgentToolCallProvenance $callProvenance, AgentDriveMount $sourceMount, DriveSpace $sourceSpace, AgentDrivePath $sourcePath): void
+    public function findOwnWorkingCopyOfCall(AgentToolCallProvenance $callProvenance, DriveSpace $ownDriveSpace): ?DriveWorkingCopy
     {
-        if (!$sourceMount->isOwnDrive || $sourcePath->reference !== null || $callProvenance->workspaceKey === null) {
-            return;
+        $driveWorkingCopiesService = $this->getDriveWorkingCopiesService();
+        $workingCopyKey = $this->getDriveSpaceMountResolverService()->findWorkingCopyKeyOfCall($callProvenance);
+        return $workingCopyKey !== null
+            ? $driveWorkingCopiesService->findOrCreateWorkingCopy($ownDriveSpace, $workingCopyKey)
+            : $driveWorkingCopiesService->findNewestWorkingCopy($ownDriveSpace);
+    }
+
+    /**
+     * A source of the own drive with a saved, uncommitted change is committed first, so the copy carries what the
+     * sandbox holds now. Answers why the source cannot be copied (the commit failed or left a conflict), null when it can.
+     */
+    protected function commitUncommittedSource(AgentToolCallProvenance $callProvenance, AgentDriveMount $sourceMount, DriveSpace $sourceSpace, AgentDrivePath $sourcePath): ?string
+    {
+        if (!$sourceMount->isOwnDrive || $sourcePath->reference !== null) {
+            return null;
         }
         try {
             $driveWorkingCopiesService = $this->getDriveWorkingCopiesService();
-            $driveWorkingCopy = $driveWorkingCopiesService->findWorkingCopy($sourceSpace, $callProvenance->workspaceKey);
-            if ($driveWorkingCopy !== null && $driveWorkingCopiesService->findEntryByPath($driveWorkingCopy, $sourcePath->pathInMount) !== null) {
-                $driveWorkingCopiesService->commitChanges($driveWorkingCopy, 'committed before a copy', [$sourcePath->pathInMount]);
+            $driveWorkingCopy = $this->findOwnWorkingCopyOfCall($callProvenance, $sourceSpace);
+            if ($driveWorkingCopy === null || $driveWorkingCopiesService->findEntryByPath($driveWorkingCopy, $sourcePath->pathInMount) === null) {
+                return null;
             }
+            $driveCommitResult = $driveWorkingCopiesService->commitChanges($driveWorkingCopy, 'committed before a copy', [$sourcePath->pathInMount]);
+            if (($driveCommitResult->conflictedFiles?->count() ?? 0) > 0 || $driveCommitResult->refusedLines !== []) {
+                return 'its saved change could not be committed first (' . str_replace("\n", '; ', $driveCommitResult->buildSummaryLine()) . '): resolve it with commitDriveChanges, then copy';
+            }
+            return null;
         } catch (Throwable $throwable) {
             DDDService::instance()->getLogger()->warning('[CloudDrive] commit before a copy failed', ['path' => $sourcePath->pathInMount, 'reason' => $throwable->getMessage()]);
+            return 'its saved change could not be committed first: ' . $throwable->getMessage();
         }
     }
 

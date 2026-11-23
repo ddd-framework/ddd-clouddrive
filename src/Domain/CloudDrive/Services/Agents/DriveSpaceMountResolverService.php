@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DDD\Domain\CloudDrive\Services\Agents;
 
 use DDD\Domain\AI\Entities\AgentSpaces\AgentSpace;
+use DDD\Domain\AI\Entities\Conversations\Agent\AgentToolCallProvenance;
 use DDD\Domain\AI\Entities\Drives\AgentDriveMount;
 use DDD\Domain\CloudDrive\Entities\AI\Mounts\DriveSpaceMount;
 use DDD\Domain\CloudDrive\Entities\AI\Mounts\DriveSpaceMounts;
@@ -29,6 +30,15 @@ class DriveSpaceMountResolverService extends Service
     public function findOrCreateOwnDriveSpace(AgentSpace $agentSpace): ?DriveSpace
     {
         return null;
+    }
+
+    /**
+     * The working copy key of the call's sandbox on the own drive: the call's workspace key, else null (the store then
+     * takes the newest working copy of the own drive). A host whose workspace keys follow a rule overrides this.
+     */
+    public function findWorkingCopyKeyOfCall(AgentToolCallProvenance $callProvenance): ?string
+    {
+        return $callProvenance->workspaceKey !== null && $callProvenance->workspaceKey !== '' ? $callProvenance->workspaceKey : null;
     }
 
     /** The further spaces the sandbox mounts: only spaces every operator allowed on the agent space may read */

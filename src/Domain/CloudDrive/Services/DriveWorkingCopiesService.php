@@ -80,6 +80,21 @@ class DriveWorkingCopiesService extends EntitiesService
         return $driveWorkingCopy;
     }
 
+    /** The working copy of the space changed last (a sandbox that did not name its key) */
+    public function findNewestWorkingCopy(DriveSpace $driveSpace): ?DriveWorkingCopy
+    {
+        $repoClass = $this->getEntityRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder();
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->setParameter('driveSpaceId', (int)$driveSpace->id)
+            ->orderBy("{$alias}.updated", 'DESC')
+            ->addOrderBy("{$alias}.id", 'DESC')
+            ->setMaxResults(1);
+        $driveWorkingCopy = $repoClass->find($queryBuilder, false);
+        return $driveWorkingCopy instanceof DriveWorkingCopy ? $driveWorkingCopy : null;
+    }
+
     public function findWorkingCopy(DriveSpace $driveSpace, string $workingCopyKey): ?DriveWorkingCopy
     {
         $repoClass = $this->getEntityRepoClassInstance();

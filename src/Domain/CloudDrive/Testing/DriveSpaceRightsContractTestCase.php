@@ -37,6 +37,14 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
     /** An account that may write the space */
     abstract protected function createWriterAccount(DriveSpace $driveSpace): Account;
 
+    protected function tearDown(): void
+    {
+        // the signed-in account and the space rights are process state: the next test starts without them
+        $noAccount = null;
+        AuthService::instance()->setAccount($noAccount);
+        parent::tearDown();
+    }
+
     public function testACallerWithoutRightsReadsNothingOfTheSpace(): void
     {
         $driveSpace = $this->createSpaceWithOneFile();

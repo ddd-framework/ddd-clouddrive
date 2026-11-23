@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-rc.4
+
+- Fixed: the agent tools find the own drive's working copy without a workspace key on the call:
+  `DriveSpaceMountResolverService::findWorkingCopyKeyOfCall()` (default: the call's key), else the space's newest
+  working copy (`DriveWorkingCopiesService::findNewestWorkingCopy()`); `CloudDriveAgentDriveStoreService::findOwnWorkingCopyOfCall()`.
+- Fixed: `commitDriveChanges` without paths commits the changes of the delegation tree's root conversation
+  (`getTreeRootConversationId()`), not of a child's own id.
+- Fixed: a source of the own drive whose saved change cannot be committed before a copy is refused with the reason in
+  the tool result (before: logged and copied in its older version).
+- Fixed: `createWorkspaceRestoreGrant()` refuses a BLOCKED blob; SCAN_FAILED stays restorable into the sandbox only.
+- Fixed: `DriveSpaceRightsContractTestCase` signs the account out after each test, so it runs beside other tests.
+
 ## 0.1.0-rc.3
 
 - Added: `GET …/nodes/{id}` answers `ancestors` (the folders above the node, root first) for breadcrumbs and deep
