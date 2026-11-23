@@ -67,7 +67,9 @@ class DriveContentGrantsService extends Service
         $driveBlob = $this->getDriveBlobsService()->find((int)$driveFileVersion->driveBlobId, false);
         if (!$driveBlob instanceof DriveBlob || !$driveBlob->isReadableByPeople()) {
             throw new ForbiddenException(match ($driveBlob?->state) {
-                DriveBlob::STATE_BLOCKED => 'The file was blocked by the malware scan.',
+                DriveBlob::STATE_BLOCKED => $driveBlob->findScanStatus() === DriveBlob::SCAN_STATUS_BLOCKED
+                    ? 'The file was refused by the type rules of this space.'
+                    : 'The file was blocked by the malware scan.',
                 DriveBlob::STATE_SCAN_FAILED => 'The malware scan could not run yet; the file is scanned again shortly.',
                 default => 'The version is not released yet (it waits for its scan).',
             });

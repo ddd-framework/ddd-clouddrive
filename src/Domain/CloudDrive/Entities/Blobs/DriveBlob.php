@@ -55,9 +55,17 @@ class DriveBlob extends Entity
     public const string SCAN_STATUS_INFECTED = 'INFECTED';
     public const string SCAN_STATUS_FAILED = 'FAILED';
     public const string SCAN_STATUS_PURGING = 'PURGING';
+    /** Refused by the space's type policy (the bytes do not fit the name, a program …), not by the malware scan */
+    public const string SCAN_STATUS_BLOCKED = 'BLOCKED';
+
+    /** The start of the state reason of a blob the type policy refused */
+    public const string STATE_REASON_TYPE_POLICY_PREFIX = 'type policy: ';
+
+    /** The start of the state reason of a scan that could not run (rc.1 stored such blobs BLOCKED; the maintenance repairs them) */
+    public const string STATE_REASON_SCAN_FAILED_PREFIX = 'scan failed';
     public const array SCAN_STATUSES = [
         self::SCAN_STATUS_UPLOADING, self::SCAN_STATUS_PENDING, self::SCAN_STATUS_CLEAN, self::SCAN_STATUS_INFECTED,
-        self::SCAN_STATUS_FAILED, self::SCAN_STATUS_PURGING,
+        self::SCAN_STATUS_FAILED, self::SCAN_STATUS_PURGING, self::SCAN_STATUS_BLOCKED,
     ];
 
     #[NotNull]
@@ -117,14 +125,16 @@ class DriveBlob extends Entity
 
     /**
      * The blob's state as a file manager names it: UPLOADING, PENDING (staged or waiting for its scan), CLEAN
-     * (released), INFECTED (blocked by the scan), FAILED (the scan could not run, or the upload failed), PURGING.
+     * (released), INFECTED (blocked by the scan), BLOCKED (refused by the type policy), FAILED (the scan could not run,
+     * or the upload failed), PURGING.
      */
     public function findScanStatus(): string
     {
         return match ($this->state) {
             self::STATE_UPLOADING => self::SCAN_STATUS_UPLOADING,
             self::STATE_RELEASED => self::SCAN_STATUS_CLEAN,
-            self::STATE_BLOCKED => self::SCAN_STATUS_INFECTED,
+            self::STATE_BLOCKED => str_starts_with((string)$this->stateReason, self::STATE_REASON_TYPE_POLICY_PREFIX)
+                ? self::SCAN_STATUS_BLOCKED : self::SCAN_STATUS_INFECTED,
             self::STATE_SCAN_FAILED, self::STATE_FAILED => self::SCAN_STATUS_FAILED,
             self::STATE_PURGING => self::SCAN_STATUS_PURGING,
             default => self::SCAN_STATUS_PENDING,

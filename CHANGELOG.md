@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.0-rc.12
+
+- Added (space list): `DriveSpaceListItem::$displayGroup` (a group code for ordering and icons) from the host hook
+  `DriveSpacesService::buildSpaceDisplayGroup()` (default the kind in upper case); `spaces/list` is ordered by
+  `compareSpaceListItems()` — `getSpaceDisplayGroupRank()` of the code (default the order of the kinds in
+  `spaceKinds.php`, no group last), the code, the display name (case-insensitive), the id. An application with its own
+  labels and order overrides these hooks (same-path subclass); no own list building needed.
+- Added (usage): `DriveSpaceQuota` gains `effectiveQuotaBytes` (= `quotaBytes`) and the split of `usedBytes` into
+  `currentVersionBytes`, `olderVersionBytes`, `trashedBytes` (released blobs, each counted once: current version of a
+  live file, else trash, else older version or awaiting the sweep) and `pendingBytes` (the rest of the counter:
+  uploads in flight, waiting for or refused by the scan, marked for purge). One grouped query per list
+  (`DriveBlobsService::findSpaceUsages()`).
+- Added (list items): `latestVersionNumber`, `latestVersionScanStatus`, `latestVersionStateReason` when the newest
+  version is not the current one. The scan status `BLOCKED` names a type-policy refusal (a malware finding stays
+  `INFECTED`); the download refusal says which.
+- Fixed: an ingest message without an account was dropped silently (the version lookup ran under rights). The ingest
+  handler runs as a system job without rights restrictions and logs a version that does not exist.
+- Fixed: blobs rc.1 stored BLOCKED after a failed scan (reason `scan failed …`) were never scanned again.
+  `app:drive:maintain` puts them back to SCAN_FAILED (compare-and-set, idempotent, listed with a count, `--dryRun`)
+  before the rescan step, which releases their versions when clean. Malware findings and type-policy refusals are not
+  touched.
+
 ## 0.1.0-rc.11
 
 - Added (audience): the caller acts as INTERNAL (staff, default) or SHARED (`DriveSpacesService::getCurrentAudience()`,

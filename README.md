@@ -67,16 +67,19 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    `driveNodeIds` on `…/children` and `…/search`; `approximateTotalCount` on unfiltered lists; `eventTypes` /
    `eventGroup` on `…/nodes/{id}/events`; `purpose=THUMBNAIL` on `…/nodes/{id}/content` (DOWNLOAD and INLINE are
    recorded as accesses). A partner controller overrides `getDriveAudience()` (SHARED) and
-   `throwForbiddenUnlessCloudDriveAccessAllowed()`. The space answers carry a quota block and, for pickers, `displayName` and `groupLabel`
-   (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()`, default the title and the kind's
-   `label`); people's names come from `DriveNodesService::findAccountDisplayNames()` and, per audience (e.g. the staff
+   `throwForbiddenUnlessCloudDriveAccessAllowed()`. The space answers carry a quota block (the effective quota, and `usedBytes` split into
+   `currentVersionBytes`, `olderVersionBytes`, `trashedBytes` and `pendingBytes`) and, for pickers, `displayName`,
+   `groupLabel` and `displayGroup` (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()` /
+   `buildSpaceDisplayGroup()`, default the title, the kind's `label` and the kind in upper case); `spaces/list` is
+   ordered by `compareSpaceListItems()` (`getSpaceDisplayGroupRank()`: the order of the kinds, then the name); people's names come from `DriveNodesService::findAccountDisplayNames()` and, per audience (e.g. the staff
    under the company's name for partners), `DriveActorNamesService::buildActorDisplayName()` — override them in the
    host. Further host hooks: `DriveSpacesService::isWriteAllowedForAudience()`,
    `DriveTypePoliciesService::buildTypePolicyForSpace()`, `DriveContentGrantsService::isVariantAllowed()`,
    `DriveChangesService::findOnBehalfOfAccountIdOfCurrentCaller()`; contracts (autoconfigured):
    `DriveSpaceTransferListener`, `DriveNodeLifecycleListener`, `DriveSvgSanitizer`.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
-   failed scans and lost ingests again, the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`). A scan takes seconds (clamscan loads its signatures each
+   failed scans and lost ingests again (blobs an early release stored BLOCKED after a failed scan are put back first),
+   the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`). A scan takes seconds (clamscan loads its signatures each
    time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
    `drive_ingest` and give it a consumer (worker list).
 6. The malware scanner (`CloudDrive.settings.malwareScanner`, default `clamscan` with the limits of the `clamscan`

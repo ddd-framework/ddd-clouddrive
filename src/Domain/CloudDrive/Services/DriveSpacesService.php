@@ -11,6 +11,7 @@ use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceListItem;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceListItems;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceQuota;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceUsage;
 use DDD\Domain\CloudDrive\Repo\DB\DBDriveSpaceScopedEntity;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpaces;
@@ -18,6 +19,7 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
+use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Symfony\Messenger\WorkerStateResetterInterface;
 use Symfony\Contracts\Service\ResetInterface;
@@ -295,22 +297,43 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         return $audienceSpaceIds;
     }
 
-    /** The quota of a space and its counters (what counts: {@see DriveSpaceQuota}) */
-    public function buildSpaceQuota(DriveSpace $driveSpace): DriveSpaceQuota
+    /**
+     * The quota of a space, its counters and the split of the used bytes (what counts: {@see DriveSpaceQuota}). Without
+     * `$driveSpaceUsage` the split is read for this space alone.
+     */
+    public function buildSpaceQuota(DriveSpace $driveSpace, ?DriveSpaceUsage $driveSpaceUsage = null): DriveSpaceQuota
     {
         $driveSpaceQuota = new DriveSpaceQuota();
         $driveSpaceQuota->usedBytes = (int)$driveSpace->usedBytes;
         $driveSpaceQuota->quotaBytes = $driveSpace->getEffectiveQuotaBytes();
+        $driveSpaceQuota->effectiveQuotaBytes = $driveSpaceQuota->quotaBytes;
         $driveSpaceQuota->maxFileSizeBytes = $driveSpace->getEffectiveMaxFileSizeBytes();
         $driveSpaceQuota->fileCount = (int)$driveSpace->fileCount;
         $driveSpaceQuota->folderCount = (int)$driveSpace->folderCount;
         $driveSpaceQuota->trashRetentionDays = $driveSpace->getTrashRetentionDays();
         $driveSpaceQuota->keptVersionCount = $driveSpace->getKeptVersionCount();
         $driveSpaceQuota->versionRetentionDays = $driveSpace->getVersionRetentionDays();
+        $driveSpaceUsage ??= $this->getDriveBlobsService()->findSpaceUsages([(int)$driveSpace->id])->getByUniqueKey(DriveSpaceUsage::uniqueKeyStatic((string)(int)$driveSpace->id));
+        $this->applySpaceUsageToQuota($driveSpaceQuota, $driveSpaceUsage);
         return $driveSpaceQuota;
     }
 
-    /** The spaces as a space picker lists them: display name, group, quota and the caller's write and manage rights */
+    /** Splits the quota's used bytes into the released parts of `$driveSpaceUsage` and the pending rest */
+    public function applySpaceUsageToQuota(DriveSpaceQuota $driveSpaceQuota, ?DriveSpaceUsage $driveSpaceUsage): void
+    {
+        $driveSpaceQuota->currentVersionBytes = $driveSpaceUsage?->currentVersionBytes ?? 0;
+        $driveSpaceQuota->olderVersionBytes = $driveSpaceUsage?->olderVersionBytes ?? 0;
+        $driveSpaceQuota->trashedBytes = $driveSpaceUsage?->trashedBytes ?? 0;
+        $driveSpaceQuota->pendingBytes = max(
+            0,
+            $driveSpaceQuota->usedBytes - $driveSpaceQuota->currentVersionBytes - $driveSpaceQuota->olderVersionBytes - $driveSpaceQuota->trashedBytes
+        );
+    }
+
+    /**
+     * The spaces as a space picker lists them: display name, group, quota and the caller's write and manage rights, in
+     * the order of {@see compareSpaceListItems()}.
+     */
     public function buildSpaceListItems(DriveSpaces $driveSpaces): DriveSpaceListItems
     {
         $driveSpaceIds = [];
@@ -319,26 +342,35 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         }
         $writableSpaceIds = array_flip($this->findSpaceIdsWithRight($driveSpaceIds, DBDriveSpace::RIGHT_WRITE));
         $managedSpaceIds = array_flip($this->findSpaceIdsWithRight($driveSpaceIds, DBDriveSpace::RIGHT_MANAGE));
+        $driveSpaceUsages = $this->getDriveBlobsService()->findSpaceUsages($driveSpaceIds);
         $driveSpaceListItems = new DriveSpaceListItems();
         foreach ($driveSpaces->getElements() as $driveSpace) {
-            $driveSpaceListItem = $this->buildSpaceListItem($driveSpace, isset($writableSpaceIds[(int)$driveSpace->id]), isset($managedSpaceIds[(int)$driveSpace->id]));
+            $driveSpaceListItem = $this->buildSpaceListItem(
+                $driveSpace,
+                isset($writableSpaceIds[(int)$driveSpace->id]),
+                isset($managedSpaceIds[(int)$driveSpace->id]),
+                // a space without released blobs has no usage row: its split is all pending, no second query
+                $driveSpaceUsages->getByUniqueKey(DriveSpaceUsage::uniqueKeyStatic((string)(int)$driveSpace->id)) ?? new DriveSpaceUsage()
+            );
             $driveSpaceListItems->add($driveSpaceListItem);
         }
+        $driveSpaceListItems->sort([$this, 'compareSpaceListItems']);
         return $driveSpaceListItems;
     }
 
-    /** One space as a picker shows it */
-    public function buildSpaceListItem(DriveSpace $driveSpace, bool $canWrite, bool $canManage): DriveSpaceListItem
+    /** One space as a picker shows it; without `$driveSpaceUsage` the split of its used bytes is read for it alone */
+    public function buildSpaceListItem(DriveSpace $driveSpace, bool $canWrite, bool $canManage, ?DriveSpaceUsage $driveSpaceUsage = null): DriveSpaceListItem
     {
         $driveSpaceListItem = new DriveSpaceListItem();
         $driveSpaceListItem->id = (int)$driveSpace->id;
         $driveSpaceListItem->title = $driveSpace->title;
         $driveSpaceListItem->displayName = $this->buildSpaceDisplayName($driveSpace);
         $driveSpaceListItem->groupLabel = $this->buildSpaceGroupLabel($driveSpace);
+        $driveSpaceListItem->displayGroup = $this->buildSpaceDisplayGroup($driveSpace);
         $driveSpaceListItem->spaceKind = $driveSpace->spaceKind;
         $driveSpaceListItem->audience = $driveSpace->audience;
         $driveSpaceListItem->rootNodeId = $driveSpace->rootNodeId;
-        $driveSpaceListItem->quota = $this->buildSpaceQuota($driveSpace);
+        $driveSpaceListItem->quota = $this->buildSpaceQuota($driveSpace, $driveSpaceUsage);
         $driveSpaceListItem->canWrite = $canWrite;
         $driveSpaceListItem->canManage = $canManage;
         return $driveSpaceListItem;
@@ -363,11 +395,68 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         return is_string($groupLabel) && $groupLabel !== '' ? $groupLabel : null;
     }
 
+    /**
+     * A code of the space's group for ordering and icons: the kind in upper case by default (`default` → `DEFAULT`),
+     * null without a kind. Override in the application with its own codes.
+     */
+    public function buildSpaceDisplayGroup(DriveSpace $driveSpace): ?string
+    {
+        $spaceKind = trim((string)$driveSpace->spaceKind);
+        return $spaceKind !== '' ? strtoupper($spaceKind) : null;
+    }
+
+    /**
+     * The order of a space list (`spaces/list`): by {@see getSpaceDisplayGroupRank()} of the group code, then the group
+     * code, then the display name (case-insensitive, natural), then the id. Override the rank for the application's
+     * group order, or this comparison for a different order altogether.
+     */
+    public function compareSpaceListItems(DriveSpaceListItem $driveSpaceListItem, DriveSpaceListItem $otherDriveSpaceListItem): int
+    {
+        return [
+                $this->getSpaceDisplayGroupRank($driveSpaceListItem->displayGroup),
+                (string)$driveSpaceListItem->displayGroup,
+                mb_strtolower($driveSpaceListItem->displayName),
+                $driveSpaceListItem->id,
+            ] <=> [
+                $this->getSpaceDisplayGroupRank($otherDriveSpaceListItem->displayGroup),
+                (string)$otherDriveSpaceListItem->displayGroup,
+                mb_strtolower($otherDriveSpaceListItem->displayName),
+                $otherDriveSpaceListItem->id,
+            ];
+    }
+
+    /**
+     * The rank of a group code in a space list (lower first). Default: the order of the kinds in
+     * `config/app/CloudDrive/spaceKinds.php` (a code is the kind in upper case), unknown codes after them, no group last.
+     */
+    public function getSpaceDisplayGroupRank(?string $displayGroup): int
+    {
+        if ($displayGroup === null || $displayGroup === '') {
+            return PHP_INT_MAX;
+        }
+        $spaceKinds = Config::get('CloudDrive.spaceKinds');
+        $rank = 0;
+        foreach (is_array($spaceKinds) ? array_keys($spaceKinds) : [] as $spaceKind) {
+            if (strtoupper((string)$spaceKind) === $displayGroup) {
+                return $rank;
+            }
+            $rank++;
+        }
+        return PHP_INT_MAX - 1;
+    }
+
     /** The model class of the application's space repository */
     public function getSpaceModelClass(): string
     {
         /** @var DBDriveSpace $driveSpaceRepoClass */
         $driveSpaceRepoClass = DBDriveSpaceScopedEntity::getDriveSpaceRepoClass();
         return $driveSpaceRepoClass::BASE_ORM_MODEL;
+    }
+
+    protected function getDriveBlobsService(): DriveBlobsService
+    {
+        /** @var DriveBlobsService $driveBlobsService */
+        $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
+        return $driveBlobsService;
     }
 }

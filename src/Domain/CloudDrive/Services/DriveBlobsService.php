@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace DDD\Domain\CloudDrive\Services;
 
+use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveScanResult;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceUsage;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceUsages;
 use DDD\Domain\CloudDrive\Entities\TypePolicies\DriveTypePolicy;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequests;
@@ -16,6 +19,7 @@ use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadReservation;
 use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlob;
 use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlobs;
+use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersion;
 use DDD\Infrastructure\Base\DateTime\DateTime;
@@ -51,7 +55,7 @@ class DriveBlobsService extends EntitiesService
     public const int MIN_PART_BYTES = 5 * 1024 * 1024;
 
     /** @var string The start of a blob's state reason when the type policy blocked it (not the malware scan) */
-    public const string TYPE_POLICY_REFUSAL_PREFIX = 'type policy: ';
+    public const string TYPE_POLICY_REFUSAL_PREFIX = DriveBlob::STATE_REASON_TYPE_POLICY_PREFIX;
 
     /**
      * Reserves an upload into a space: checks the largest file, reserves the bytes against the quota and answers how to
@@ -364,6 +368,95 @@ class DriveBlobsService extends EntitiesService
         }
         $sniffedContentType = (new finfo(FILEINFO_MIME_TYPE))->file($filePath);
         return is_string($sniffedContentType) && $sniffedContentType !== '' ? strtolower($sniffedContentType) : UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+    }
+
+    /**
+     * The released bytes of the spaces by what they hold ({@see DriveSpaceUsage}): one grouped query; each released blob
+     * counts once, as a current version of a live file, else as trash (a version of a trashed file), else as an older
+     * version (or unreferenced, until the sweep). Not released blobs are left out (the quota's `pendingBytes`). A space
+     * without released blobs is missing from the answer. Reads every blob of the spaces: no rights condition (counters
+     * of spaces the caller already holds).
+     *
+     * @param int[] $driveSpaceIds
+     */
+    public function findSpaceUsages(array $driveSpaceIds): DriveSpaceUsages
+    {
+        $driveSpaceUsages = new DriveSpaceUsages();
+        $driveSpaceIds = array_values(array_unique(array_filter(array_map('intval', $driveSpaceIds))));
+        if ($driveSpaceIds === []) {
+            return $driveSpaceUsages;
+        }
+        $blobTableName = (DBDriveBlob::BASE_ORM_MODEL)::getTableName();
+        $versionTableName = (DBDriveFileVersion::BASE_ORM_MODEL)::getTableName();
+        $nodeTableName = (DBDriveNode::BASE_ORM_MODEL)::getTableName();
+        $rows = EntityManagerFactory::getInstance()->getConnection()->fetchAllAssociative(
+            'SELECT `blobUse`.`driveSpaceId`,'
+            . ' SUM(CASE WHEN `blobUse`.`isCurrentOfLiveFile` = 1 THEN `blobUse`.`sizeBytes` ELSE 0 END) AS `currentVersionBytes`,'
+            . ' SUM(CASE WHEN `blobUse`.`isCurrentOfLiveFile` = 0 AND `blobUse`.`isOfTrashedFile` = 1 THEN `blobUse`.`sizeBytes` ELSE 0 END) AS `trashedBytes`,'
+            . ' SUM(CASE WHEN `blobUse`.`isCurrentOfLiveFile` = 0 AND `blobUse`.`isOfTrashedFile` = 0 THEN `blobUse`.`sizeBytes` ELSE 0 END) AS `olderVersionBytes`'
+            . ' FROM (SELECT `blob`.`id`, `blob`.`driveSpaceId`, MAX(COALESCE(`blob`.`sizeBytes`, 0)) AS `sizeBytes`,'
+            . ' MAX(CASE WHEN `node`.`id` IS NOT NULL AND `node`.`trashedAt` IS NULL AND `node`.`currentVersionId` = `version`.`id` THEN 1 ELSE 0 END) AS `isCurrentOfLiveFile`,'
+            . ' MAX(CASE WHEN `node`.`trashedAt` IS NOT NULL THEN 1 ELSE 0 END) AS `isOfTrashedFile`'
+            . ' FROM `' . $blobTableName . '` `blob`'
+            . ' LEFT JOIN `' . $versionTableName . '` `version` ON `version`.`driveBlobId` = `blob`.`id`'
+            . ' LEFT JOIN `' . $nodeTableName . '` `node` ON `node`.`id` = `version`.`driveNodeId`'
+            . ' WHERE `blob`.`driveSpaceId` IN (:driveSpaceIds) AND `blob`.`state` = :releasedState'
+            . ' GROUP BY `blob`.`id`, `blob`.`driveSpaceId`) `blobUse`'
+            . ' GROUP BY `blobUse`.`driveSpaceId`',
+            ['driveSpaceIds' => $driveSpaceIds, 'releasedState' => DriveBlob::STATE_RELEASED],
+            ['driveSpaceIds' => \Doctrine\DBAL\ArrayParameterType::INTEGER]
+        );
+        foreach ($rows as $row) {
+            $driveSpaceUsage = new DriveSpaceUsage();
+            $driveSpaceUsage->driveSpaceId = (int)$row['driveSpaceId'];
+            $driveSpaceUsage->currentVersionBytes = (int)$row['currentVersionBytes'];
+            $driveSpaceUsage->olderVersionBytes = (int)$row['olderVersionBytes'];
+            $driveSpaceUsage->trashedBytes = (int)$row['trashedBytes'];
+            $driveSpaceUsages->add($driveSpaceUsage);
+        }
+        return $driveSpaceUsages;
+    }
+
+    /**
+     * Blobs stored BLOCKED although their scan only failed (the scanner could not run): rc.1 wrote a failed scan as
+     * BLOCKED with the reason `scan failed (exit …): …`, so they were never scanned again. Matched by state BLOCKED and a
+     * reason starting with {@see DriveBlob::STATE_REASON_SCAN_FAILED_PREFIX}; a malware finding (`malware: …`, the
+     * scanner's signature) and a type-policy refusal (`type policy: …`) never match. Oldest first.
+     */
+    public function findBlobsBlockedByFailedScan(int $limit = 100): DriveBlobs
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.state = :state")->setParameter('state', DriveBlob::STATE_BLOCKED)
+            ->andWhere("{$alias}.stateReason LIKE :scanFailedReason")->setParameter('scanFailedReason', DriveBlob::STATE_REASON_SCAN_FAILED_PREFIX . '%')
+            ->orderBy("{$alias}.id", 'ASC')->setMaxResults(max(1, $limit));
+        $driveBlobs = $repoClass->find($queryBuilder, false);
+        return $driveBlobs instanceof DriveBlobs ? $driveBlobs : new DriveBlobs();
+    }
+
+    /**
+     * Puts a blob {@see findBlobsBlockedByFailedScan()} found back on the retry path (SCAN_FAILED, reason kept):
+     * compare-and-set from BLOCKED, so a blob another process changed meanwhile is left alone.
+     *
+     * @return bool true when this call moved it
+     */
+    public function markBlockedScanFailureForRescan(DriveBlob $driveBlob): bool
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $alias = $repoClass::getBaseModelAlias();
+        $movedRowCount = (int)$repoClass::createQueryBuilder()
+            ->update(DBDriveBlob::BASE_ORM_MODEL, $alias)
+            ->set("{$alias}.state", ':scanFailedState')->setParameter('scanFailedState', DriveBlob::STATE_SCAN_FAILED)
+            ->andWhere("{$alias}.id = :driveBlobId")->setParameter('driveBlobId', (int)$driveBlob->id)
+            ->andWhere("{$alias}.state = :blockedState")->setParameter('blockedState', DriveBlob::STATE_BLOCKED)
+            ->andWhere("{$alias}.stateReason LIKE :scanFailedReason")->setParameter('scanFailedReason', DriveBlob::STATE_REASON_SCAN_FAILED_PREFIX . '%')
+            ->getQuery()->execute();
+        if ($movedRowCount === 1) {
+            $driveBlob->state = DriveBlob::STATE_SCAN_FAILED;
+            return true;
+        }
+        return false;
     }
 
     /** Blobs whose scan failed, oldest first: the maintenance scans them again */

@@ -735,6 +735,13 @@ class DriveNodesService extends EntitiesService
                 && (int)$driveNode->latestVersionId !== (int)$driveNode->currentVersionId
                 && $latestBlob !== null
                 && in_array($latestBlob->findScanStatus(), [DriveBlob::SCAN_STATUS_UPLOADING, DriveBlob::SCAN_STATUS_PENDING], true);
+            if ($driveNode->currentVersionId !== null && $latestVersion !== null && $latestBlob !== null
+                && (int)$driveNode->latestVersionId !== (int)$driveNode->currentVersionId
+            ) {
+                $driveNodeListItem->latestVersionNumber = $latestVersion->versionNumber;
+                $driveNodeListItem->latestVersionScanStatus = $latestBlob->findScanStatus();
+                $driveNodeListItem->latestVersionStateReason = $latestBlob->isReadableByPeople() ? null : $latestBlob->stateReason;
+            }
             if ($shownBlob !== null && $shownBlob->isReadableByPeople() && UntrustedContentHeaders::isInlineContentType($shownBlob->contentType)
                 && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_THUMBNAIL, $this->getDriveSpacesService()->getCurrentAudience())
             ) {

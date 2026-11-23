@@ -59,6 +59,7 @@ class DriveMaintenanceService extends Service
                 ...$this->expireSystemFolderFiles($isDryRun),
                 ...$this->purgeExpiredTrash($isDryRun),
                 ...$this->purgeVersionsBeyondRetention($isDryRun),
+                ...$this->repairScanFailuresStoredAsBlocked($isDryRun),
                 ...$this->rescanFailedScans($isDryRun),
                 ...$this->reingestStaleVersions($isDryRun),
                 ...$this->sweepBlobs($isDryRun),
@@ -161,6 +162,34 @@ class DriveMaintenanceService extends Service
                     $this->purgeVersion($expiredVersion);
                 }
             }
+        }
+        return $resultLines;
+    }
+
+    /**
+     * Puts blobs that were stored BLOCKED although their scan only failed (rc.1) back on the retry path, so the next
+     * step ({@see rescanFailedScans()}) scans them again and releases their versions when clean. Idempotent: once
+     * repaired, nothing matches any more. Answers one line per blob and a count.
+     *
+     * @return string[]
+     */
+    public function repairScanFailuresStoredAsBlocked(bool $isDryRun): array
+    {
+        $resultLines = [];
+        $repairedCount = 0;
+        foreach ($this->getDriveBlobsService()->findBlobsBlockedByFailedScan(self::BATCH_SIZE)->getElements() as $blockedBlob) {
+            if ($isDryRun) {
+                $resultLines[] = sprintf('would put blob %d of space %d back to the scan (stored BLOCKED, but its scan failed)', (int)$blockedBlob->id, (int)$blockedBlob->driveSpaceId);
+                $repairedCount++;
+                continue;
+            }
+            if ($this->getDriveBlobsService()->markBlockedScanFailureForRescan($blockedBlob)) {
+                $resultLines[] = sprintf('put blob %d of space %d back to the scan (stored BLOCKED, but its scan failed)', (int)$blockedBlob->id, (int)$blockedBlob->driveSpaceId);
+                $repairedCount++;
+            }
+        }
+        if ($repairedCount > 0) {
+            $resultLines[] = sprintf('%s %d blob(s) stored BLOCKED after a failed scan', $isDryRun ? 'would repair' : 'repaired', $repairedCount);
         }
         return $resultLines;
     }

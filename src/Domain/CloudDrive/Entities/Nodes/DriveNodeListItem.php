@@ -56,6 +56,15 @@ class DriveNodeListItem extends ValueObject
     /** @var bool A newer version waits for its scan while the current one stays readable */
     public bool $hasPendingVersion = false;
 
+    /** @var int|null The newest version's number, when it is not the current one (waiting, failed or refused) */
+    public ?int $latestVersionNumber = null;
+
+    /** @var string|null The newest version's state when it is not the current one: UPLOADING, PENDING, FAILED, INFECTED, BLOCKED, PURGING */
+    public ?string $latestVersionScanStatus = null;
+
+    /** @var string|null Why the newest version is not current (the scan's finding, the type policy's refusal), when known */
+    public ?string $latestVersionStateReason = null;
+
     /** @var bool A working copy (an agent sandbox) holds saved, uncommitted changes of this node */
     public bool $hasWorkingCopyChanges = false;
 
