@@ -52,6 +52,9 @@ class DBDriveSpaceModel extends DoctrineModel
 	#[ORM\Column(type: 'integer')]
 	public int $folderCount = 0;
 
+	#[ORM\Column(type: 'string')]
+	public ?string $scratchKey;
+
 	#[ORM\Column(type: 'boolean')]
 	public bool $isAudienceWriteLocked = false;
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-rc.5
+
+- Added: eval isolation as standard (with mgamadeus/ddd-agents ≥ 0.1.29): every eval case gets a throwaway own drive
+  space keyed on its workspace key (`DriveSpace::$scratchKey`, kind `evalScratch`), seeded from the case's
+  `scratchFiles`; while the case runs, that space is the agent's own drive and every further mount is read-only; at the
+  case's end it is erased (kept with `app:ai-agent:eval-tools --keepWorkspace`). `CloudDriveEvalWorkspaceParticipantService`.
+- Added: `DriveVersionsService::writeFileContent()` (a file from content the server holds), `DriveMaintenanceService::eraseSpace()`,
+  `DriveSpacesService::findSpaceByScratchKey()`. New column `DriveSpaces.scratchKey`: apply the schema diff.
+
 ## 0.1.0-rc.4
 
 - Fixed: the agent tools find the own drive's working copy without a workspace key on the call:

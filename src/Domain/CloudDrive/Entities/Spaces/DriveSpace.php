@@ -91,6 +91,10 @@ class DriveSpace extends Entity
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
     public ?int $folderCount = 0;
 
+    /** @var string|null A throwaway space of one eval case: the case's workspace key; erased at the case's end */
+    #[Length(max: 128)]
+    public ?string $scratchKey = null;
+
     /** @var bool The audience reads only; the staff still writes */
     #[NotNull]
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]

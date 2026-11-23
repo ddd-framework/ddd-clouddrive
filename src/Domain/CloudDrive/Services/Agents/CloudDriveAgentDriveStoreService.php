@@ -53,7 +53,11 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             return $agentDriveMounts;
         }
         $driveSpaceMountResolverService = $this->getDriveSpaceMountResolverService();
-        $ownDriveSpace = $driveSpaceMountResolverService->findOrCreateOwnDriveSpace($agentSpace);
+        // an eval case with a scratch drive: that space is the own drive and every further mount is read-only
+        $scratchDriveSpace = $callProvenance->workspaceKey !== null
+            ? $this->getDriveSpacesService()->findSpaceByScratchKey($callProvenance->workspaceKey)
+            : null;
+        $ownDriveSpace = $scratchDriveSpace ?? $driveSpaceMountResolverService->findOrCreateOwnDriveSpace($agentSpace);
         if ($ownDriveSpace !== null) {
             $ownDriveMount = $this->buildMount($ownDriveSpace, '', AgentDriveMount::MODE_READ_WRITE, null);
             $ownDriveMount->isOwnDrive = true;
@@ -63,7 +67,12 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             if ($driveSpaceMount->driveSpace === null || ($ownDriveSpace !== null && $driveSpaceMount->driveSpace->id === $ownDriveSpace->id)) {
                 continue;
             }
-            $agentDriveMount = $this->buildMount($driveSpaceMount->driveSpace, $driveSpaceMount->mountName, $driveSpaceMount->mode, $driveSpaceMount->audienceDescription);
+            $agentDriveMount = $this->buildMount(
+                $driveSpaceMount->driveSpace,
+                $driveSpaceMount->mountName,
+                $scratchDriveSpace !== null ? AgentDriveMount::MODE_READ_ONLY : $driveSpaceMount->mode,
+                $driveSpaceMount->audienceDescription
+            );
             $agentDriveMounts->add($agentDriveMount);
         }
         return $agentDriveMounts;

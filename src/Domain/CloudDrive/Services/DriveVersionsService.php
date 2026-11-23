@@ -9,6 +9,7 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
@@ -207,6 +208,38 @@ class DriveVersionsService extends EntitiesService
             $this->releaseVersion($driveFileVersion, $effectiveBlob);
         }
         return (string)$effectiveBlob->state;
+    }
+
+    /**
+     * Writes a file from content the server holds (a seed, an import): the bytes go to the store from PHP, then the
+     * file is written at the path (folders created) and ingested. Small content only (it is in memory).
+     *
+     * @throws BadRequestException
+     * @throws InternalErrorException
+     */
+    public function writeFileContent(DriveSpace $driveSpace, string $path, string $content, ?string $contentType = null, ?string $comment = null, string $origin = DriveNode::ORIGIN_UPLOAD): DriveFileWriteResult
+    {
+        $pathSegments = DriveNodesService::splitPath($path);
+        $fileName = (string)array_pop($pathSegments);
+        $folderNode = $this->getDriveNodesService()->findOrCreateFolderPath($driveSpace, implode('/', $pathSegments));
+        $driveUploadRequest = new DriveUploadRequest();
+        $driveUploadRequest->sizeBytes = strlen($content);
+        $driveUploadRequest->contentType = $contentType;
+        $driveUploadReservation = $this->getDriveBlobsService()->reserveUpload($driveSpace, $driveUploadRequest);
+        $driveBlob = $this->getDriveBlobsService()->find($driveUploadReservation->driveBlobId, false);
+        if (!$driveBlob instanceof DriveBlob) {
+            throw new InternalErrorException('The reserved blob is missing.');
+        }
+        if ($driveBlob->state === DriveBlob::STATE_UPLOADING) {
+            if ($driveBlob->multipartUploadId !== null) {
+                $this->getDriveBlobsService()->getObjectStorage()->abortMultipartUpload((string)$driveBlob->storageKey, $driveBlob->multipartUploadId);
+                $driveBlob->multipartUploadId = null;
+                $driveBlob->updatePartialIgnoringRights('multipartUploadId');
+            }
+            $this->getDriveBlobsService()->getObjectStorage()->putObjectIfAbsent((string)$driveBlob->storageKey, $content, $contentType);
+        }
+        $existingNode = $this->getDriveNodesService()->findChildByName($folderNode, $fileName);
+        return $this->writeUploadedFile($driveBlob, $folderNode, $fileName, $comment, $existingNode?->latestVersionId, $existingNode !== null);
     }
 
     /** The versions of a file, newest first */

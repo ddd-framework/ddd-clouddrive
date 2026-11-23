@@ -107,6 +107,19 @@ class DriveSpacesService extends EntitiesService
         return $driveSpace instanceof DriveSpace ? $driveSpace : null;
     }
 
+    /** The throwaway space of an eval case's workspace key, null when there is none */
+    public function findSpaceByScratchKey(string $scratchKey): ?DriveSpace
+    {
+        /** @var DBDriveSpace $driveSpaceRepoClass */
+        $driveSpaceRepoClass = DBDriveSpaceScopedEntity::getDriveSpaceRepoClass();
+        $driveSpaceRepo = new $driveSpaceRepoClass();
+        $queryBuilder = $driveSpaceRepoClass::createQueryBuilder(true);
+        $alias = $driveSpaceRepoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.scratchKey = :scratchKey")->setParameter('scratchKey', $scratchKey)->setMaxResults(1);
+        $driveSpace = $driveSpaceRepo->find($queryBuilder, false);
+        return $driveSpace instanceof DriveSpace ? $driveSpace : null;
+    }
+
     /**
      * Reserves bytes against the quota in one statement; false when the quota would be exceeded.
      */

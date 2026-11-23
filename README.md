@@ -53,6 +53,9 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
 
 `app:drive:spaces:create` creates a library space.
 
+Evals (ddd-agents ≥ 0.1.29): every case gets a throwaway own drive seeded from its `scratchFiles`; further mounts are
+read-only during the case; the space is erased at the end (`--keepWorkspace` keeps it).
+
 ## License
 
 MIT

@@ -9,7 +9,11 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
+use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlob;
+use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvent;
+use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopy;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
 use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlobs;
@@ -203,6 +207,54 @@ class DriveMaintenanceService extends Service
             }
         }
         return $resultLines;
+    }
+
+    /**
+     * Erases a space with everything in it: nodes, versions, blobs (objects deleted from the store), the feed, the
+     * working copies and the space row. Without rights (an operator or a harness decided it).
+     *
+     * @return string[]
+     */
+    public function eraseSpace(DriveSpace $driveSpace): array
+    {
+        $driveSpaceId = (int)$driveSpace->id;
+        DDDService::instance()->deactivateEntityRightsRestrictions();
+        try {
+            $blobRepoClass = new DBDriveBlobs();
+            $queryBuilder = $blobRepoClass::createQueryBuilder(true);
+            $alias = $blobRepoClass::getBaseModelAlias();
+            $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")->setParameter('driveSpaceId', $driveSpaceId);
+            $driveBlobs = $blobRepoClass->find($queryBuilder, false);
+            $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
+            $storageKeys = [];
+            foreach (($driveBlobs instanceof DriveBlobs ? $driveBlobs->getElements() : []) as $driveBlob) {
+                if ($driveBlob->multipartUploadId !== null) {
+                    $objectStorage->abortMultipartUpload((string)$driveBlob->storageKey, $driveBlob->multipartUploadId);
+                }
+                $storageKeys[] = (string)$driveBlob->storageKey;
+            }
+            $objectStorage->deleteObjects($storageKeys);
+            foreach ([
+                DBDriveWorkingCopyEntry::BASE_ORM_MODEL,
+                DBDriveWorkingCopy::BASE_ORM_MODEL,
+                DBDriveChangeEvent::BASE_ORM_MODEL,
+                DBDriveFileVersion::BASE_ORM_MODEL,
+                DBDriveBlob::BASE_ORM_MODEL,
+            ] as $modelClass) {
+                DBDriveNode::createQueryBuilder()->delete($modelClass, 'row')->where('row.driveSpaceId = :driveSpaceId')
+                    ->setParameter('driveSpaceId', $driveSpaceId)->getQuery()->execute();
+            }
+            // children before parents: a folder's foreign key holds no node, so one statement removes them all
+            DBDriveNode::createQueryBuilder()->delete(DBDriveNode::BASE_ORM_MODEL, 'node')->where('node.driveSpaceId = :driveSpaceId')
+                ->setParameter('driveSpaceId', $driveSpaceId)->getQuery()->execute();
+            /** @var DriveSpacesService $driveSpacesService */
+            $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+            DBDriveNode::createQueryBuilder()->delete($driveSpacesService->getSpaceModelClass(), 'space')->where('space.id = :driveSpaceId')
+                ->setParameter('driveSpaceId', $driveSpaceId)->getQuery()->execute();
+        } finally {
+            DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
+        }
+        return [sprintf('erased drive space %d (%d objects)', $driveSpaceId, count($storageKeys ?? []))];
     }
 
     /** Deletes a node (a folder with everything below it) and its versions; their blobs are swept when unreferenced */

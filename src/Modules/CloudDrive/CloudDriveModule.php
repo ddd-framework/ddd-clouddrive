@@ -16,6 +16,9 @@ class CloudDriveModule extends DDDModule
     /** @var string A class of ddd-agents: the agent part of the module registers only beside it */
     public const string AGENTS_PACKAGE_CLASS = 'DDD\\Domain\\AI\\Services\\Drives\\AgentDriveStore';
 
+    /** @var string A class of ddd-agents ≥ 0.1.29: the eval isolation registers only beside it */
+    public const string AGENTS_EVAL_PARTICIPANT_CLASS = 'DDD\\Domain\\AI\\Services\\Eval\\AgentEvalWorkspaceParticipant';
+
     public static function getSourcePath(): string
     {
         return __DIR__ . '/../..';
@@ -41,6 +44,8 @@ class CloudDriveModule extends DDDModule
     public static function getNamespacesRequiringClasses(): array
     {
         return [
+            // a class below Eval\\ needs both classes: the eval participant of ddd-agents ≥ 0.1.29 and the drive store
+            'DDD\\Domain\\CloudDrive\\Services\\Agents\\Eval\\' => self::AGENTS_EVAL_PARTICIPANT_CLASS,
             'DDD\\Domain\\CloudDrive\\Services\\Agents\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Entities\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Presentation\\Mcp\\Client\\CloudDrive\\' => self::AGENTS_PACKAGE_CLASS,
