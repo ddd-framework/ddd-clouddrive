@@ -4,6 +4,13 @@ Module of mgamadeus/ddd: drive spaces, versioned files in object storage, workin
 Overview and install: `README.md`; changes per version: `CHANGELOG.md`. Core conventions (no `private` / `final`,
 skills first, no struct-shaped arrays on public surface) apply: Core `AGENTS.md`.
 
+## Space rights
+
+Rights live in `DBDriveSpace::applyRightsToSpaceQuery()`, extended only by `DriveSpaceRightsExtension` services
+(`DriveSpaceRightsExtensionsService`, fail closed). A host never subclasses `DriveSpace`, `DBDriveSpace` or
+`DBDriveSpaceModel` (unsupported: two Doctrine models on one table). Anything a host used to put on a space subclass
+goes into a `DriveSpacesService` hook or into the host's own table holding `driveSpaceId`.
+
 ## Audiences, type policy, activity
 
 Every rights check for WRITE and MANAGE runs through `DriveSpacesService::isRightAllowedForAudience()` with the

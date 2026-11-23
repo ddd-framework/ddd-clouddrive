@@ -9,9 +9,19 @@ folders and versioned files whose bytes live in object storage, working copies f
 - **Spaces** (`DriveSpace`): one tree per space, an audience fixed at creation (`INTERNAL` or `SHARED`), quota,
   largest file and retention per `spaceKind` (`config/app/CloudDrive/spaceKinds.php`). The host extends `DriveSpace`
   at the same path with its anchor columns.
-- **Rights**: the host's space repository answers read, write and manage in one method,
-  `DBDriveSpace::applyRightsToSpaceQuery()`; every drive table filters through it. Default: admins everything, everyone
-  else nothing. `DriveSpaceRightsContractTestCase` is the test a host runs against its rules.
+- **Rights**: read, write and manage are decided in one place, `DBDriveSpace::applyRightsToSpaceQuery()`; every drive
+  table and every service check filters through it. Default: admins everything, everyone else nothing. The host adds
+  its rules as `DriveSpaceRightsExtension` services (tag `clouddrive.space_rights_extension`, autoconfigured, any
+  number): `isCallerUnrestricted()` (true = every space, false = only granted spaces — also for an admin, null = no
+  opinion; one false wins) and `buildSpaceRightsCondition()` (a DQL condition on the space alias, OR-composed; no
+  joins, subqueries and parameters prefixed with the given prefix). A throwing extension grants nothing.
+  `DriveSpaceRightsContractTestCase` is the test a host runs against its rules.
+- **Do not subclass `DriveSpace`, `DBDriveSpace` or `DBDriveSpaceModel`** (unsupported): a second Doctrine model on
+  the spaces table clashes with the module's relations (node and working-copy models point at one space model, and
+  lazy loads resolve either class depending on the path — "Cannot assign …DBDriveSpaceModel" errors). Rights:
+  `DriveSpaceRightsExtension`; labels, grouping, ordering, quota, mount names: the `DriveSpacesService` hooks (a
+  same-path subclass of the service is fine); the link from a space to the host's records (e.g. a team owning it):
+  a table of the host that holds the `driveSpaceId`, read by the extension through a subquery.
 - **Audiences**: a caller acts as INTERNAL (staff) or SHARED (e.g. partners): SHARED never manages and writes only where
   `DriveSpacesService::isWriteAllowedForAudience()` allows it (not while the space is `isAudienceWriteLocked`). A
   partner controller mounts the same trait with `getDriveAudience()` returning SHARED.
@@ -54,8 +64,8 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    that ignores `If-None-Match` on PUT sets `conditionalWrites: false`. Bucket CORS for the app origins; a lifecycle
    rule that aborts unfinished multipart uploads.
 2. The tables: generate the models (`app:generate-doctrine-models-for-entities`) and apply the schema diff.
-3. A `DriveSpace` subclass at the same path with the host's anchor columns, and its repository's
-   `applyRightsToSpaceQuery()`.
+3. The host's rights as one or more `DriveSpaceRightsExtension` services (no `DriveSpace` subclass, see Rights), and
+   its own mapping of records to spaces (a host table with `driveSpaceId`).
 4. The REST endpoints: one controller with `use CloudDriveControllerTrait;` (`#[Route('/common/cloudDrive')]`).
    `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs. It is a POST
    (the references are a body) but only reads: a host write guard that classifies routes by method lets it through

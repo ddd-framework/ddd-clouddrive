@@ -9,15 +9,20 @@ use DDD\Domain\Base\Repo\DB\DBEntity;
 use DDD\Domain\Base\Repo\DB\Doctrine\DoctrineModel;
 use DDD\Domain\Base\Repo\DB\Doctrine\DoctrineQueryBuilder;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Services\DriveSpaceRightsExtension;
+use DDD\Domain\CloudDrive\Services\DriveSpaceRightsExtensionsService;
+use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\AuthService;
 
 /**
  * The one place that knows who may do what in a drive: read, write (upload, organise, trash, restore, commit) and
  * manage (settings, purge, erase). Write implies read, manage implies write. Every drive table filters through
- * {@see applyRightsToSpaceQuery()}: a host overrides that method in the repository of its `DriveSpace` subclass and
- * adds conditions on the space alias (its anchor columns, its own rights tables, a hierarchy claim).
+ * {@see applyRightsToSpaceQuery()}.
  *
- * The default: an admin account may do everything, every other caller nothing.
+ * The default: an admin account may do everything, every other caller nothing. A host adds its rules as
+ * {@see DriveSpaceRightsExtension}s (tagged services, composed by {@see DriveSpaceRightsExtensionsService}); it never
+ * subclasses DriveSpace, this repository or its model — a second Doctrine model on the same table breaks the drive's
+ * relations (unsupported).
  *
  * @method DriveSpace find(DoctrineQueryBuilder|string|int $idOrQueryBuilder, bool $useEntityRegistryCache = true, ?DoctrineModel &$loadedOrmInstance = null, bool $deferredCaching = false)
  * @method DriveSpace update(DefaultObject &$entity, int $depth = 1)
@@ -33,16 +38,25 @@ class DBDriveSpace extends DBEntity
 
     /**
      * Adds the conditions under which the caller has `$right` on the space rows of `$spaceAlias`; true when conditions
-     * were added, false when the caller has the right on every space. Override in the host's repository.
+     * were added, false when the caller has the right on every space. The host's rules come from its
+     * {@see DriveSpaceRightsExtension}s; without one, an admin account has every right and every other caller none.
      */
     public static function applyRightsToSpaceQuery(DoctrineQueryBuilder &$queryBuilder, string $spaceAlias, string $right): bool
     {
         $authAccount = AuthService::instance()->getAccount();
-        if ($authAccount !== null && ($authAccount->roles?->isAdmin() ?? false)) {
+        $isAdminAccount = $authAccount !== null && ($authAccount->roles?->isAdmin() ?? false);
+        $driveSpaceRightsExtensionsService = static::getDriveSpaceRightsExtensionsService();
+        if ($driveSpaceRightsExtensionsService->isCallerUnrestricted($authAccount, $right, $isAdminAccount)) {
             return false;
         }
-        $queryBuilder->andWhere("{$spaceAlias}.id IS NULL");
-        return true;
+        return $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, $spaceAlias, $right, $authAccount);
+    }
+
+    public static function getDriveSpaceRightsExtensionsService(): DriveSpaceRightsExtensionsService
+    {
+        /** @var DriveSpaceRightsExtensionsService $driveSpaceRightsExtensionsService */
+        $driveSpaceRightsExtensionsService = DDDService::instance()->getService(DriveSpaceRightsExtensionsService::class);
+        return $driveSpaceRightsExtensionsService;
     }
 
     /** {@see applyRightsToSpaceQuery()} unless rights are switched off (a system operation) */

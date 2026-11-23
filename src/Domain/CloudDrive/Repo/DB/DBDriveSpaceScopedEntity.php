@@ -12,15 +12,20 @@ use DDD\Infrastructure\Services\DDDService;
 
 /**
  * The repository of a drive table whose rows belong to a space (`driveSpaceId`): a row is readable when its space is
- * readable and writable when its space is writable, under the rights of the host's space repository
- * ({@see DBDriveSpace::applyRightsToSpaceQuery()}). No drive row is reachable outside the caller's spaces.
+ * readable and writable when its space is writable, under the drive's space rights
+ * ({@see DBDriveSpace::applyRightsToSpaceQuery()}, extended by the host's DriveSpaceRightsExtension services). No
+ * drive row is reachable outside the caller's spaces.
  */
 abstract class DBDriveSpaceScopedEntity extends DBEntity
 {
     /** @var string The alias of the space inside the rights subquery */
     public const string RIGHTS_SPACE_ALIAS = 'rightsDriveSpace';
 
-    /** The repository class of the application's `DriveSpace` (a same-path subclass), else the module's */
+    /**
+     * The space repository: the module's. A same-path subclass of DriveSpace (kept resolvable for applications that
+     * still have one) is unsupported — its second Doctrine model on the same table clashes with the module's relations;
+     * hosts express their rights as DriveSpaceRightsExtension services.
+     */
     public static function getDriveSpaceRepoClass(): string
     {
         $driveSpaceClassName = DDDService::instance()->getContainerServiceClassNameForClass(DriveSpace::class) ?? DriveSpace::class;

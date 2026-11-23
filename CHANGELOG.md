@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-rc.16
+
+- Added (rights): `DriveSpaceRightsExtension` (tag `clouddrive.space_rights_extension`, autoconfigured, any number),
+  composed by `DriveSpaceRightsExtensionsService` into `DBDriveSpace::applyRightsToSpaceQuery()`:
+  `isCallerUnrestricted(?Account, string $right): ?bool` (one false restricts — also an admin; else one true
+  unrestricts; else the default: admins everything) and `buildSpaceRightsCondition(DoctrineQueryBuilder, string
+  $spaceAlias, string $right, ?Account, string $parameterPrefix): ?string` (OR-composed grants; none = no space). Every
+  drive table and every service right check uses it. A throwing extension grants nothing (logged).
+- Changed (docs): subclassing `DriveSpace` / `DBDriveSpace` / `DBDriveSpaceModel` is unsupported (two Doctrine models on
+  one table break the module's relations). Hosts with such a subclass move its rights into an extension, its labels
+  into the `DriveSpacesService` hooks and its anchor (e.g. an owning record id) into a host table holding
+  `driveSpaceId`, then delete the subclass, regenerate the models and run the schema diff (it must show no change on
+  `DriveSpaces` unless the subclass had added columns — drop those only with the owner's go).
+- `DriveSpaceRightsContractTestCase`: `testManageImpliesWriteAndWriteDoesNotImplyManage()` (with the optional
+  `createWriterWithoutManageAccount()`) and `testTheSpaceIsNotSubclassedByTheHost()`.
+
 ## 0.1.0-rc.15
 
 - Added: the agent's file cards (`DriveFiles` widget, hydrated through ddd-agents' `POST …/driveFiles/cards`) carry the

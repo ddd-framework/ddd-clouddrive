@@ -6,7 +6,9 @@ namespace DDD\Domain\CloudDrive\Testing;
 
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Repo\DB\DBDriveSpaceScopedEntity;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
+use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpaceModel;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
@@ -20,8 +22,9 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The contract a host's space rights fulfil; a host extends this test case in its suite (with a database) and names
- * a space plus three accounts. A caller without rights reads no row of the space (nodes, feed, cards, content); write
- * is a subset of read and manage of write.
+ * a space plus its accounts. The host's rules are DriveSpaceRightsExtension services, never a subclass of DriveSpace,
+ * DBDriveSpace or DBDriveSpaceModel. A caller without rights reads no row of the space (nodes, feed, cards, content);
+ * write is a subset of read and manage of write.
  */
 abstract class DriveSpaceRightsContractTestCase extends TestCase
 {
@@ -36,6 +39,12 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
 
     /** An account that may write the space */
     abstract protected function createWriterAccount(DriveSpace $driveSpace): Account;
+
+    /** An account that may write but not manage the space; null when the host has no such role */
+    protected function createWriterWithoutManageAccount(DriveSpace $driveSpace): ?Account
+    {
+        return null;
+    }
 
     protected function tearDown(): void
     {
@@ -76,6 +85,26 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
         self::assertNotNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_READ));
         $this->expectException(ForbiddenException::class);
         $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE);
+    }
+
+    public function testManageImpliesWriteAndWriteDoesNotImplyManage(): void
+    {
+        $driveSpace = $this->createSpaceWithOneFile();
+        $writerWithoutManageAccount = $this->createWriterWithoutManageAccount($driveSpace);
+        if ($writerWithoutManageAccount === null) {
+            self::assertTrue(true);
+            return;
+        }
+        AuthService::instance()->setAccount($writerWithoutManageAccount);
+        self::assertNotNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE));
+        self::assertNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_MANAGE));
+    }
+
+    /** The rights come from DriveSpaceRightsExtension services: a second space repository or model breaks the drive */
+    public function testTheSpaceIsNotSubclassedByTheHost(): void
+    {
+        self::assertSame(DBDriveSpace::class, DBDriveSpaceScopedEntity::getDriveSpaceRepoClass(), 'remove the same-path subclass of DriveSpace / DBDriveSpace; use a DriveSpaceRightsExtension');
+        self::assertSame(DBDriveSpaceModel::class, DBDriveSpaceScopedEntity::getDriveSpaceRepoClass()::BASE_ORM_MODEL);
     }
 
     protected function findAnyFileAsSystem(DriveSpace $driveSpace): DriveNode
