@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: imagick, intl
+          coverage: none
+      - run: composer install --no-interaction --no-progress --no-scripts
+      - name: Lint
+        run: find src config tests -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+      - name: Unit tests
+        run: vendor/bin/phpunit

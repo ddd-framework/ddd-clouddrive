@@ -36,5 +36,10 @@
     },
     "extra": {
         "ddd-module": "DDD\\Modules\\CloudDrive\\CloudDriveModule"
+    },
+    "config": {
+        "allow-plugins": {
+            "symfony/runtime": true
+        }
     }
 }
