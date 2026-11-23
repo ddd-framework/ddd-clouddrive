@@ -57,6 +57,7 @@ class DriveNode extends Entity
     public ?DriveSpace $driveSpace;
 
     /** @var int|null The folder; null only for the space's root folder */
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $parentNodeId = null;
 
     #[NotNull]
@@ -85,14 +86,17 @@ class DriveNode extends Entity
 
     /** @var int|null LINK: the node in the same space it points to */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $linkTargetNodeId = null;
 
     /** @var int|null The released version people read */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $currentVersionId = null;
 
     /** @var int|null The newest written version, pending included: the base a write compares and swaps */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $latestVersionId = null;
 
     /** @var int|null The newest version's number */
@@ -138,9 +142,11 @@ class DriveNode extends Entity
 
     /** @var int|null The node this one was copied from (another space possibly); no sync afterwards */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $copiedFromNodeId = null;
 
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $copiedFromVersionId = null;
 
     /** @var int Live children of a folder */
@@ -157,6 +163,7 @@ class DriveNode extends Entity
 
     /** @var int|null The node whose trashing took this one along (a folder); restored with it */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $trashedWithNodeId = null;
 
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]

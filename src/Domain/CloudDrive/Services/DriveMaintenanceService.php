@@ -45,6 +45,7 @@ class DriveMaintenanceService extends Service
                 ...$this->expireSystemFolderFiles($isDryRun),
                 ...$this->purgeExpiredTrash($isDryRun),
                 ...$this->purgeVersionsBeyondRetention($isDryRun),
+                ...$this->rescanFailedScans($isDryRun),
                 ...$this->sweepBlobs($isDryRun),
             ];
         } finally {
@@ -142,6 +143,28 @@ class DriveMaintenanceService extends Service
                 if (!$isDryRun) {
                     $this->purgeVersion($expiredVersion);
                 }
+            }
+        }
+        return $resultLines;
+    }
+
+    /**
+     * Scans blobs again whose scan failed (scanner missing, no signatures) and releases their versions when clean.
+     *
+     * @return string[]
+     */
+    public function rescanFailedScans(bool $isDryRun): array
+    {
+        $resultLines = [];
+        foreach ($this->getDriveBlobsService()->findBlobsWithFailedScan(self::BATCH_SIZE)->getElements() as $failedBlob) {
+            if ($isDryRun) {
+                $resultLines[] = sprintf('would scan blob %d of space %d again', (int)$failedBlob->id, (int)$failedBlob->driveSpaceId);
+                continue;
+            }
+            try {
+                $resultLines[] = sprintf('scanned blob %d again: %s', (int)$failedBlob->id, $this->getDriveVersionsService()->rescanBlob($failedBlob));
+            } catch (Throwable $throwable) {
+                $resultLines[] = sprintf('blob %d could not be scanned again: %s', (int)$failedBlob->id, $throwable->getMessage());
             }
         }
         return $resultLines;

@@ -8,6 +8,7 @@ use DDD\Domain\Base\Entities\ChangeHistory\ChangeHistoryTrait;
 use DDD\Domain\Base\Entities\Entity;
 use DDD\Domain\Base\Entities\LazyLoad\LazyLoadRepo;
 use DDD\Domain\Base\Entities\QueryOptions\QueryOptionsTrait;
+use DDD\Domain\Base\Repo\DB\Database\DatabaseColumn;
 use DDD\Domain\Base\Repo\DB\Database\DatabaseIndex;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvent;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
@@ -41,8 +42,10 @@ class DriveChangeEvent extends Entity
     public const string EVENT_READ_BY_AGENT = 'READ_BY_AGENT';
 
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;
 
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveNodeId = null;
 
     #[NotNull]
@@ -51,6 +54,7 @@ class DriveChangeEvent extends Entity
     public ?string $eventType = null;
 
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveFileVersionId = null;
 
     /** @var string|null The node's path after the change (for people; a working copy reads the node) */

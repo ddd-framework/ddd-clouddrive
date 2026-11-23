@@ -36,9 +36,11 @@ class DriveWorkingCopyEntry extends Entity
     public const array CHANGES = [self::CHANGE_ADDED, self::CHANGE_MODIFIED, self::CHANGE_DELETED, self::CHANGE_MOVED];
 
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveWorkingCopyId = null;
 
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;
 
     /** @var string The path in the space after the change, e.g. `reports/Plan.md` */
@@ -60,14 +62,17 @@ class DriveWorkingCopyEntry extends Entity
 
     /** @var int|null The node the change is made on; null for a new file */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveNodeId = null;
 
     /** @var int|null The version the change was made on; null for a new file */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $baseVersionId = null;
 
     /** @var int|null The staged blob with the new content (ADDED, MODIFIED) */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $stagedDriveBlobId = null;
 
     /** @var string|null Why the last commit left the change uncommitted (a newer version, the file was trashed, the path is taken) */
@@ -77,6 +82,7 @@ class DriveWorkingCopyEntry extends Entity
 
     /** @var int|null The newer version the last commit found ("theirs") */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $conflictVersionId = null;
 
     /** @var string|null The conversation whose turn made the change; its turn end commits it */

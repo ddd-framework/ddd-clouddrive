@@ -21,7 +21,7 @@ use Symfony\Component\Validator\Constraints\NotNull;
  * The bytes of one or more versions of a space: one object in the store under a key of its own, written once and never
  * overwritten. Its state says what may read it: UPLOADING (the bytes are on their way), STAGED (held by a working copy,
  * not yet a version), PENDING (a version waits for its scan), RELEASED (people may read it), BLOCKED (the scan
- * refused it), FAILED, PURGING (the sweep removes it). Equal content of one space shares a released blob.
+ * found malware), SCAN_FAILED (the scanner could not run; scanned again by the maintenance), FAILED, PURGING (the sweep removes it). Equal content of one space shares a released blob.
  */
 #[LazyLoadRepo(LazyLoadRepo::DB, DBDriveBlob::class)]
 #[DatabaseIndex(indexType: DatabaseIndex::TYPE_UNIQUE, indexColumns: ['storageKey'])]
@@ -39,14 +39,17 @@ class DriveBlob extends Entity
     public const string STATE_PENDING = 'PENDING';
     public const string STATE_RELEASED = 'RELEASED';
     public const string STATE_BLOCKED = 'BLOCKED';
+    /** @var string The scanner could not run: not readable by people, scanned again by the maintenance */
+    public const string STATE_SCAN_FAILED = 'SCAN_FAILED';
     public const string STATE_FAILED = 'FAILED';
     public const string STATE_PURGING = 'PURGING';
     public const array STATES = [
         self::STATE_UPLOADING, self::STATE_STAGED, self::STATE_PENDING, self::STATE_RELEASED,
-        self::STATE_BLOCKED, self::STATE_FAILED, self::STATE_PURGING,
+        self::STATE_BLOCKED, self::STATE_SCAN_FAILED, self::STATE_FAILED, self::STATE_PURGING,
     ];
 
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;
 
     /** @var string The object's key in the store: `<spaceId>/<blob id>-<random>`, never reused */

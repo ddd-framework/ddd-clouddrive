@@ -41,7 +41,8 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
     {
         $driveSpace = $this->createSpaceWithOneFile();
         $fileNode = $this->findAnyFileAsSystem($driveSpace);
-        AuthService::instance()->setAccount($this->createAccountWithoutRights($driveSpace));
+        $accountWithoutRights = $this->createAccountWithoutRights($driveSpace);
+        AuthService::instance()->setAccount($accountWithoutRights);
 
         self::assertNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_READ));
         self::assertNull($this->getDriveNodesService()->find((int)$fileNode->id, false));
@@ -55,7 +56,8 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
     public function testWriteImpliesReadAndReadDoesNotImplyWrite(): void
     {
         $driveSpace = $this->createSpaceWithOneFile();
-        AuthService::instance()->setAccount($this->createWriterAccount($driveSpace));
+        $writerAccount = $this->createWriterAccount($driveSpace);
+        AuthService::instance()->setAccount($writerAccount);
         self::assertNotNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE));
         self::assertNotNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_READ));
         $readOnlyAccount = $this->createReadOnlyAccount($driveSpace);

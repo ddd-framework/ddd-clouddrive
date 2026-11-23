@@ -189,6 +189,26 @@ class DriveVersionsService extends EntitiesService
         return $driveFileWriteResult;
     }
 
+    /**
+     * Scans a blob whose scan failed again and releases (or blocks) every version on it. Answers the blob's state.
+     *
+     * @throws InternalErrorException
+     */
+    public function rescanBlob(DriveBlob $driveBlob): string
+    {
+        $effectiveBlob = $this->getDriveBlobsService()->ingestBlob($driveBlob);
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveBlobId IN (:driveBlobIds)")
+            ->setParameter('driveBlobIds', array_values(array_unique([(int)$driveBlob->id, (int)$effectiveBlob->id])));
+        $driveFileVersions = $repoClass->find($queryBuilder, false);
+        foreach (($driveFileVersions instanceof DriveFileVersions ? $driveFileVersions->getElements() : []) as $driveFileVersion) {
+            $this->releaseVersion($driveFileVersion, $effectiveBlob);
+        }
+        return (string)$effectiveBlob->state;
+    }
+
     /** The versions of a file, newest first */
     public function findVersionsOfNode(DriveNode $driveNode, int $limit = 50): DriveFileVersions
     {

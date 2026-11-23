@@ -31,6 +31,7 @@ class DriveFileVersion extends Entity
     public const string SERVICE_NAME = DriveVersionsService::class;
 
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;
 
     #[NotNull]
@@ -45,6 +46,7 @@ class DriveFileVersion extends Entity
 
     /** @var int The blob with the content; a version keeps it (no foreign key: dedup re-points versions, the sweep deletes blobs) */
     #[NotNull]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveBlobId = null;
 
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
@@ -86,5 +88,6 @@ class DriveFileVersion extends Entity
 
     /** @var int|null The version this one was copied from (another space possibly) */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $copiedFromVersionId = null;
 }

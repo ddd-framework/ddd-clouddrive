@@ -16,7 +16,9 @@ return [
     'multipartPartBytes' => 16 * 1024 * 1024,
     // an unfinished upload or an unreferenced staged blob is swept after this many hours
     'unfinishedUploadExpiryHours' => 24,
-    // the scanner command; '' = no scan (development only: blobs are released unscanned)
+    // the scanner command (exit 0 clean, 1 infected, anything else: the scan failed and is retried by
+    // app:drive:maintain); add `--database=<dir>` when the signatures are not in clamscan's default place;
+    // '' = no scan (development only: blobs are released unscanned)
     'malwareScannerCommand' => 'clamscan --no-summary --stdout',
     // system folders of an agent workspace: hidden, not scanned; their files expire after this many days
     'systemFolders' => [

@@ -62,6 +62,7 @@ class DriveSpace extends Entity
 
     /** @var int|null The root folder; created with the space */
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $rootNodeId = null;
 
     /** @var int|null Override of the kind's quota in bytes (versions and trash count) */

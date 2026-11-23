@@ -7,6 +7,7 @@ namespace DDD\Domain\CloudDrive\Services;
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
+use DDD\Domain\CloudDrive\Entities\Blobs\DriveScanResult;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequests;
@@ -195,7 +196,7 @@ class DriveBlobsService extends EntitiesService
      */
     public function ingestBlob(DriveBlob $driveBlob, bool $isScanned = true): DriveBlob
     {
-        if (!in_array($driveBlob->state, [DriveBlob::STATE_PENDING, DriveBlob::STATE_STAGED], true)) {
+        if (!in_array($driveBlob->state, [DriveBlob::STATE_PENDING, DriveBlob::STATE_STAGED, DriveBlob::STATE_SCAN_FAILED], true)) {
             return $driveBlob;
         }
         $temporaryFilePath = tempnam(sys_get_temp_dir(), 'drive-ingest-');
@@ -216,9 +217,13 @@ class DriveBlobsService extends EntitiesService
                 $this->markForPurge($driveBlob);
                 return $releasedBlob;
             }
-            $scanFinding = $isScanned ? $this->findMalwareScanFinding($temporaryFilePath) : null;
-            $driveBlob->state = $scanFinding === null ? DriveBlob::STATE_RELEASED : DriveBlob::STATE_BLOCKED;
-            $driveBlob->stateReason = $scanFinding;
+            $driveScanResult = $isScanned ? $this->scanFile($temporaryFilePath) : DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN);
+            $driveBlob->state = match ($driveScanResult->outcome) {
+                DriveScanResult::OUTCOME_CLEAN => DriveBlob::STATE_RELEASED,
+                DriveScanResult::OUTCOME_INFECTED => DriveBlob::STATE_BLOCKED,
+                default => DriveBlob::STATE_SCAN_FAILED,
+            };
+            $driveBlob->stateReason = $driveScanResult->detail;
             $driveBlob->expiresAt = null;
             $driveBlob->updatePartialIgnoringRights('sha256', 'state', 'stateReason', 'expiresAt');
             return $driveBlob;
@@ -277,25 +282,35 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * The scanner's finding for a file, null when it is clean or no scanner is configured.
+     * The malware scan of a file: CLEAN (or no scanner configured), INFECTED (exit 1) or FAILED (any other exit: the
+     * scanner is missing or has no signatures; fail closed, scanned again later).
      */
-    public function findMalwareScanFinding(string $filePath): ?string
+    public function scanFile(string $filePath): DriveScanResult
     {
         $scannerCommand = trim((string)Config::get('CloudDrive.settings.malwareScannerCommand'));
         if ($scannerCommand === '') {
-            return null;
+            return DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN);
         }
         $scannerOutput = [];
         $exitCode = 0;
         exec($scannerCommand . ' ' . escapeshellarg($filePath) . ' 2>&1', $scannerOutput, $exitCode);
-        if ($exitCode === 0) {
-            return null;
-        }
-        if ($exitCode === 1) {
-            return mb_substr('malware: ' . implode(' ', $scannerOutput), 0, 1000);
-        }
-        // the scanner could not run (missing, no signatures): fail closed
-        return mb_substr('scan failed (exit ' . $exitCode . '): ' . implode(' ', $scannerOutput), 0, 1000);
+        return match ($exitCode) {
+            0 => DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN),
+            1 => DriveScanResult::create(DriveScanResult::OUTCOME_INFECTED, 'malware: ' . implode(' ', $scannerOutput)),
+            default => DriveScanResult::create(DriveScanResult::OUTCOME_FAILED, 'scan failed (exit ' . $exitCode . '): ' . implode(' ', $scannerOutput)),
+        };
+    }
+
+    /** Blobs whose scan failed, oldest first: the maintenance scans them again */
+    public function findBlobsWithFailedScan(int $limit = 100): DriveBlobs
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.state = :state")->setParameter('state', DriveBlob::STATE_SCAN_FAILED)
+            ->orderBy("{$alias}.id", 'ASC')->setMaxResults(max(1, $limit));
+        $driveBlobs = $repoClass->find($queryBuilder, false);
+        return $driveBlobs instanceof DriveBlobs ? $driveBlobs : new DriveBlobs();
     }
 
     public function findReleasedBlobBySha256(int $driveSpaceId, string $sha256): ?DriveBlob
