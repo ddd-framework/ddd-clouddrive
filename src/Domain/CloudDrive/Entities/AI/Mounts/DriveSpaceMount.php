@@ -16,13 +16,13 @@ class DriveSpaceMount extends ValueObject
 {
     public ?DriveSpace $driveSpace = null;
 
-    /** @var string The folder below `drivespaces/`, e.g. `library` or `world-31` */
+    /** @var string The folder below `drivespaces/`, e.g. `library` or `team-31` */
     public string $mountName = '';
 
     /** @var string One of AgentDriveMount::MODES */
     public string $mode = AgentDriveMount::MODE_READ_ONLY;
 
-    /** @var string|null Who sees the space, for the consent question (e.g. "partner users of World 31") */
+    /** @var string|null Who sees the space, for the consent question (e.g. "external users of team 31") */
     public ?string $audienceDescription = null;
 
     public function uniqueKey(): string
