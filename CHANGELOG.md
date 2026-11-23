@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-rc.15
+
+- Added: the agent's file cards (`DriveFiles` widget, hydrated through ddd-agents' `POST …/driveFiles/cards`) carry the
+  host's deep link as `AgentDriveFile::$openLink`, built from `CloudDrive.settings.adminLinkTemplate` (null without a
+  template). Needs ddd-agents 0.1.33; with an older ddd-agents nothing changes (the field is set only when it exists).
+
 ## 0.1.0-rc.14
 
 - Added (locations): `GET …/spaces/{driveSpaceId}/resolve?path=` resolves a pasted location under the caller's

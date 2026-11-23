@@ -74,7 +74,7 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    `missingSegment`, `path` and `deepestFolder`; a host with its own mount names overrides
    `DriveSpacesService::findReadableSpaceByMountName()`). With `CloudDrive.settings.adminLinkTemplate` (placeholders
    `{spaceId}`, `{nodeId}`, `{folderNodeId}`, `{path}`) file cards, the `DriveLocation` widget and resolved locations
-   carry `adminLink`, the host's deep link into its drive screen. A partner controller overrides `getDriveAudience()` (SHARED) and
+   carry `adminLink`, the host's deep link into its drive screen. The agent's `DriveFiles` cards carry the same link as `openLink` (with ddd-agents ≥ 0.1.33; an older ddd-agents gets no link). A partner controller overrides `getDriveAudience()` (SHARED) and
    `throwForbiddenUnlessCloudDriveAccessAllowed()`. The space answers carry a quota block (the effective quota, and `usedBytes` split into
    `currentVersionBytes`, `olderVersionBytes`, `trashedBytes` and `pendingBytes`) and, for pickers, `displayName`,
    `groupLabel` and `displayGroup` (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()` /

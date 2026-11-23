@@ -253,7 +253,24 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         } elseif ($driveNode->isContentUntrusted) {
             $agentDriveFile->state = 'written by a third party';
         }
+        $this->applyOpenLink($agentDriveFile, $driveNode);
         return $agentDriveFile;
+    }
+
+    /**
+     * The card's link into the host's drive screen (`CloudDrive.settings.adminLinkTemplate`), when the template is set
+     * and the installed ddd-agents knows the field (`AgentDriveFile::$openLink` exists since 0.1.33).
+     */
+    protected function applyOpenLink(AgentDriveFile $agentDriveFile, DriveNode $driveNode): void
+    {
+        if (!property_exists($agentDriveFile, 'openLink') || !method_exists($agentDriveFile, 'setOpenLinkIfSafe')) {
+            return;
+        }
+        $driveNodesService = $this->getDriveNodesService();
+        if ($driveNodesService->getAdminLinkTemplate() === null) {
+            return;
+        }
+        $agentDriveFile->setOpenLinkIfSafe($driveNodesService->buildAdminLink($driveNode));
     }
 
     /**
