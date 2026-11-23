@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-rc.22
+
+- First npm publication of `@mgamadeus/ddd-clouddrive` through trusted publishing (rc.21 reached Packagist only); no
+  content change.
+
 ## 0.1.0-rc.21
 
 - New npm package `@mgamadeus/ddd-clouddrive` from `web/` of this repository, released with the same tag and version
