@@ -41,7 +41,9 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
 3. A `DriveSpace` subclass at the same path with the host's anchor columns, and its repository's
    `applyRightsToSpaceQuery()`.
 4. The REST endpoints: one controller with `use CloudDriveControllerTrait;` (`#[Route('/common/cloudDrive')]`).
-   `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs.
+   `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs. It is a POST
+   (the references are a body) but only reads: a host write guard that classifies routes by method lets it through
+   like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links.
 5. A cron for `app:drive:maintain` (hourly): system-folder expiry, trash and version retention, the blob sweep.
 6. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts) and bind the
    skill in `config/app/AI/skillPackages.php`: `'Assistant.Drive' => ['clouddrive', 'agent.drive']`.

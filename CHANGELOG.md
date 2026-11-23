@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-rc.3
+
+- Added: `GET …/nodes/{id}` answers `ancestors` (the folders above the node, root first) for breadcrumbs and deep
+  links; `DriveNodesService::findAncestors()`.
+- Docs: `POST …/cards` only reads (a host write guard by method lets it through).
+
 ## 0.1.0-rc.2
 
 - Fixed: `DriveSpaceRightsContractTestCase` passed a call result into the by-reference `AuthService::setAccount()`

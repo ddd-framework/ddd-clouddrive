@@ -425,6 +425,7 @@ trait CloudDriveControllerTrait
         $responseDto = new DriveNodeGetResponseDto();
         $responseDto->driveNode = $driveNode;
         $responseDto->path = $driveNodesService->buildPath($driveNode);
+        $responseDto->ancestors = $driveNodesService->findAncestors($driveNode);
         $responseDto->driveFileVersions = $driveNode->isFile() ? $driveVersionsService->findVersionsOfNode($driveNode, 50) : null;
         return $responseDto;
     }

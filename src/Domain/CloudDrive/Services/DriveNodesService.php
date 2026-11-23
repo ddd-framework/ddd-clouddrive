@@ -220,6 +220,30 @@ class DriveNodesService extends EntitiesService
     }
 
     /**
+     * The folders above a node, the root first and the node's own folder last (the root included).
+     */
+    public function findAncestors(DriveNode $driveNode): DriveNodes
+    {
+        $ancestorNodes = [];
+        $currentNode = $driveNode;
+        $depth = 0;
+        while (!$currentNode->isRoot() && $depth < self::MAX_PATH_DEPTH) {
+            $parentNode = $this->find((int)$currentNode->parentNodeId, false);
+            if (!$parentNode instanceof DriveNode) {
+                break;
+            }
+            array_unshift($ancestorNodes, $parentNode);
+            $currentNode = $parentNode;
+            $depth++;
+        }
+        $driveNodes = new DriveNodes();
+        foreach ($ancestorNodes as $ancestorNode) {
+            $driveNodes->add($ancestorNode);
+        }
+        return $driveNodes;
+    }
+
+    /**
      * Renames and/or moves a node inside its space. A folder is never moved into itself or one of its descendants.
      *
      * @throws BadRequestException
