@@ -4,10 +4,18 @@ declare(strict_types=1);
 
 namespace DDD\Domain\CloudDrive\Services;
 
+use DDD\Domain\Base\Repo\DB\Doctrine\DoctrineQueryBuilder;
+use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
 use DDD\Domain\Base\Services\EntitiesService;
+use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveFileFamily;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeBulkResult;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeCounts;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListItem;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListItems;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListQuery;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
@@ -19,6 +27,8 @@ use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
+use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
+use Throwable;
 
 /**
  * Folders, files and links of a space: lookup by path, listing, creating folders, renaming, moving, tags and
@@ -36,6 +46,23 @@ class DriveNodesService extends EntitiesService
 
     public const int MAX_PATH_DEPTH = 64;
     public const int MAX_LIST_LIMIT = 1000;
+
+    /** @var int Folders one folder-tree call answers at most */
+    public const int MAX_FOLDER_TREE_SIZE = 5000;
+
+    /** @var string The cursor of a filtered or reordered list: the offset of the next page */
+    public const string OFFSET_CURSOR_PREFIX = 'o:';
+
+    public const string BULK_ACTION_MOVE = 'MOVE';
+    public const string BULK_ACTION_TRASH = 'TRASH';
+    public const string BULK_ACTION_RESTORE = 'RESTORE';
+
+    /** @var string[] Families a list filter accepts (OTHER is no filter: it is what matches none) */
+    public const array FILTERABLE_FAMILIES = [
+        DriveFileFamily::FAMILY_PDF, DriveFileFamily::FAMILY_SPREADSHEET, DriveFileFamily::FAMILY_DOCUMENT,
+        DriveFileFamily::FAMILY_PRESENTATION, DriveFileFamily::FAMILY_TEXT, DriveFileFamily::FAMILY_IMAGE,
+        DriveFileFamily::FAMILY_VECTOR, DriveFileFamily::FAMILY_VIDEO, DriveFileFamily::FAMILY_ARCHIVE,
+    ];
 
     /** @var string The cursor of a listing: the last name of the previous page */
     public const string LIST_CURSOR_PREFIX = 'n:';
@@ -174,17 +201,19 @@ class DriveNodesService extends EntitiesService
             ->andWhere("{$alias}.trashedAt IS NULL")
             ->setParameter('driveSpaceId', (int)$folderNode->driveSpaceId)
             ->setParameter('parentNodeId', (int)$folderNode->id)
-            ->orderBy("{$alias}.nodeType", 'ASC')
-            ->addOrderBy("{$alias}.nameSlot", 'ASC')
             ->setMaxResults(max(1, min(self::MAX_LIST_LIMIT, $limit)));
+        $this->applyFoldersFirstOrder($queryBuilder, $alias);
+        $queryBuilder->addOrderBy("{$alias}.nameSlot", 'ASC');
         if (!$includeSystem) {
             $queryBuilder->andWhere("{$alias}.isSystem = :isSystem")->setParameter('isSystem', false);
         }
         $cursorParts = $cursor !== null && str_starts_with($cursor, self::LIST_CURSOR_PREFIX)
             ? explode("\t", substr($cursor, strlen(self::LIST_CURSOR_PREFIX)), 2) : null;
         if ($cursorParts !== null && count($cursorParts) === 2) {
-            $queryBuilder->andWhere("({$alias}.nodeType > :cursorNodeType OR ({$alias}.nodeType = :cursorNodeType AND {$alias}.nameSlot > :cursorName))")
-                ->setParameter('cursorNodeType', $cursorParts[0])
+            $folderRankExpression = $this->buildFolderRankExpression($alias);
+            $queryBuilder->andWhere("({$folderRankExpression} > :cursorRank OR ({$folderRankExpression} = :cursorRank AND {$alias}.nameSlot > :cursorName))")
+                ->setParameter('folderNodeType', DriveNode::NODE_TYPE_FOLDER)
+                ->setParameter('cursorRank', $cursorParts[0] === DriveNode::NODE_TYPE_FOLDER ? 0 : 1)
                 ->setParameter('cursorName', $cursorParts[1]);
         }
         $driveNodes = $repoClass->find($queryBuilder, false);
@@ -408,6 +437,427 @@ class DriveNodesService extends EntitiesService
         return $driveNodes instanceof DriveNodes ? $driveNodes : new DriveNodes();
     }
 
+    /**
+     * One page of a file list: a folder or the whole space, filtered by name, family, creation window and creator,
+     * ordered by name, creation or size (folders first unless a family is asked for). A plain folder listing in the
+     * default order is {@see findChildren()} with its name cursor; everything else pages by `offset`.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     */
+    public function findNodesByListQuery(DriveSpace $driveSpace, DriveNodeListQuery $driveNodeListQuery, ?string $cursor = null): DriveNodes
+    {
+        $limit = max(1, min(self::MAX_LIST_LIMIT, $driveNodeListQuery->limit));
+        if ($driveNodeListQuery->isPlainFolderListing()) {
+            $folderNode = $driveNodeListQuery->folderNodeId !== null
+                ? $this->findNodeOfSpace($driveSpace, $driveNodeListQuery->folderNodeId)
+                : $this->findRootNode($driveSpace);
+            if ($folderNode === null || !$folderNode->isFolder()) {
+                throw new NotFoundException('Folder not found.');
+            }
+            return $this->findChildren($folderNode, $cursor, $limit, $driveNodeListQuery->includeSystem);
+        }
+        if ($driveNodeListQuery->family !== null && !in_array($driveNodeListQuery->family, static::FILTERABLE_FAMILIES, true)) {
+            throw new BadRequestException(sprintf('Unknown file family "%s"; one of %s.', $driveNodeListQuery->family, implode(', ', static::FILTERABLE_FAMILIES)));
+        }
+        if (!in_array($driveNodeListQuery->orderBy, DriveNodeListQuery::ORDER_BY_VALUES, true)) {
+            throw new BadRequestException(sprintf('Unknown order "%s"; one of %s.', $driveNodeListQuery->orderBy, implode(', ', DriveNodeListQuery::ORDER_BY_VALUES)));
+        }
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.trashedAt IS NULL")
+            ->setParameter('driveSpaceId', (int)$driveSpace->id);
+        if ($driveNodeListQuery->isRecursive) {
+            $queryBuilder->andWhere("{$alias}.parentNodeId IS NOT NULL");
+        } else {
+            $folderNode = $driveNodeListQuery->folderNodeId !== null
+                ? $this->findNodeOfSpace($driveSpace, $driveNodeListQuery->folderNodeId)
+                : $this->findRootNode($driveSpace);
+            if ($folderNode === null || !$folderNode->isFolder()) {
+                throw new NotFoundException('Folder not found.');
+            }
+            $queryBuilder->andWhere("{$alias}.parentNodeId = :parentNodeId")->setParameter('parentNodeId', (int)$folderNode->id);
+        }
+        if (!$driveNodeListQuery->includeSystem) {
+            $queryBuilder->andWhere("{$alias}.isSystem = :isSystem")->setParameter('isSystem', false);
+        }
+        $foldedQuery = $driveNodeListQuery->nameQuery !== null ? DriveNode::foldName($driveNodeListQuery->nameQuery) : '';
+        if ($foldedQuery !== '') {
+            $queryBuilder->andWhere("{$alias}.nameFolded LIKE :foldedQuery")
+                ->setParameter('foldedQuery', '%' . addcslashes($foldedQuery, '%_\\') . '%');
+        }
+        if ($driveNodeListQuery->family !== null) {
+            $this->applyFamilyFilter($queryBuilder, $alias, $driveNodeListQuery->family);
+        }
+        if ($driveNodeListQuery->createdFrom !== null) {
+            $queryBuilder->andWhere("{$alias}.created >= :createdFrom")->setParameter('createdFrom', $driveNodeListQuery->createdFrom->format('Y-m-d') . ' 00:00:00');
+        }
+        if ($driveNodeListQuery->createdTo !== null) {
+            $queryBuilder->andWhere("{$alias}.created <= :createdTo")->setParameter('createdTo', $driveNodeListQuery->createdTo->format('Y-m-d') . ' 23:59:59');
+        }
+        if ($driveNodeListQuery->createdByAccountId !== null) {
+            $queryBuilder->andWhere("{$alias}.createdByAccountId = :createdByAccountId")->setParameter('createdByAccountId', $driveNodeListQuery->createdByAccountId);
+        }
+        $orderDirection = strtolower($driveNodeListQuery->orderDirection) === DriveNodeListQuery::DIRECTION_DESC ? 'DESC' : 'ASC';
+        $orderColumn = match ($driveNodeListQuery->orderBy) {
+            DriveNodeListQuery::ORDER_BY_CREATED => 'created',
+            DriveNodeListQuery::ORDER_BY_SIZE => 'sizeBytes',
+            default => 'nameSlot',
+        };
+        $this->applyFoldersFirstOrder($queryBuilder, $alias);
+        $queryBuilder->addOrderBy("{$alias}.{$orderColumn}", $orderDirection)
+            ->addOrderBy("{$alias}.id", $orderDirection)
+            ->setFirstResult(static::parseOffsetCursor($cursor) ?? max(0, $driveNodeListQuery->offset))
+            ->setMaxResults($limit);
+        $driveNodes = $repoClass->find($queryBuilder, false);
+        return $driveNodes instanceof DriveNodes ? $driveNodes : new DriveNodes();
+    }
+
+    /** Orders folders before files and links (a node type's name would sort FILE before FOLDER) */
+    protected function applyFoldersFirstOrder(DoctrineQueryBuilder $queryBuilder, string $alias): void
+    {
+        $queryBuilder->addSelect($this->buildFolderRankExpression($alias) . ' AS HIDDEN folderRank')
+            ->setParameter('folderNodeType', DriveNode::NODE_TYPE_FOLDER)
+            ->addOrderBy('folderRank', 'ASC');
+    }
+
+    /** 0 for a folder, 1 for a file or a link */
+    protected function buildFolderRankExpression(string $alias): string
+    {
+        return "(CASE WHEN {$alias}.nodeType = :folderNodeType THEN 0 ELSE 1 END)";
+    }
+
+    /** The cursor of an offset-paged list (a filtered or reordered one): `o:<offset>` */
+    public static function buildOffsetCursor(int $offset): string
+    {
+        return self::OFFSET_CURSOR_PREFIX . $offset;
+    }
+
+    /** The offset of an `o:<offset>` cursor; null for any other cursor */
+    public static function parseOffsetCursor(?string $cursor): ?int
+    {
+        if ($cursor === null || !str_starts_with($cursor, self::OFFSET_CURSOR_PREFIX)) {
+            return null;
+        }
+        $offset = substr($cursor, strlen(self::OFFSET_CURSOR_PREFIX));
+        return ctype_digit($offset) ? (int)$offset : null;
+    }
+
+    /**
+     * Files of one family: its content types (the exact ones of every family win over a prefix), and files whose type
+     * tells nothing by their extension ({@see DriveFileFamily}).
+     */
+    protected function applyFamilyFilter(DoctrineQueryBuilder $queryBuilder, string $alias, string $family): void
+    {
+        $familyConditions = [];
+        $exactContentTypes = DriveFileFamily::CONTENT_TYPES_BY_FAMILY[$family] ?? [];
+        if ($exactContentTypes !== []) {
+            $familyConditions[] = "{$alias}.contentType IN (:familyContentTypes)";
+            $queryBuilder->setParameter('familyContentTypes', $exactContentTypes);
+        }
+        $prefixConditions = [];
+        foreach (array_values(DriveFileFamily::CONTENT_TYPE_PREFIXES_BY_FAMILY[$family] ?? []) as $prefixIndex => $contentTypePrefix) {
+            $prefixConditions[] = "{$alias}.contentType LIKE :familyContentTypePrefix{$prefixIndex}";
+            $queryBuilder->setParameter('familyContentTypePrefix' . $prefixIndex, addcslashes($contentTypePrefix, '%_\\') . '%');
+        }
+        if ($prefixConditions !== []) {
+            $otherFamiliesContentTypes = DriveFileFamily::findContentTypesOfOtherFamilies($family);
+            $familyConditions[] = '((' . implode(' OR ', $prefixConditions) . ')' . ($otherFamiliesContentTypes !== [] ? " AND {$alias}.contentType NOT IN (:otherFamiliesContentTypes)" : '') . ')';
+            if ($otherFamiliesContentTypes !== []) {
+                $queryBuilder->setParameter('otherFamiliesContentTypes', $otherFamiliesContentTypes);
+            }
+        }
+        $extensionConditions = [];
+        foreach (array_values(DriveFileFamily::EXTENSIONS_BY_FAMILY[$family] ?? []) as $extensionIndex => $extension) {
+            $extensionConditions[] = "{$alias}.nameFolded LIKE :familyExtension{$extensionIndex}";
+            $queryBuilder->setParameter('familyExtension' . $extensionIndex, '%.' . $extension);
+        }
+        if ($extensionConditions !== []) {
+            $familyConditions[] = "(({$alias}.contentType IS NULL OR {$alias}.contentType IN (:unspecificContentTypes)) AND (" . implode(' OR ', $extensionConditions) . '))';
+            $queryBuilder->setParameter('unspecificContentTypes', DriveFileFamily::UNSPECIFIC_CONTENT_TYPES);
+        }
+        $queryBuilder->andWhere("{$alias}.nodeType = :familyNodeType")->setParameter('familyNodeType', DriveNode::NODE_TYPE_FILE);
+        $queryBuilder->andWhere($familyConditions !== [] ? '(' . implode(' OR ', $familyConditions) . ')' : "{$alias}.id IS NULL");
+    }
+
+    /**
+     * One page of a space's trash: the nodes trashed on their own (what a folder took along is restored and purged
+     * with it), most recently trashed first.
+     */
+    public function findTrashedNodes(DriveSpace $driveSpace, int $offset = 0, int $limit = 100): DriveNodes
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.trashedAt IS NOT NULL")
+            ->andWhere("{$alias}.trashedWithNodeId IS NULL")
+            ->setParameter('driveSpaceId', (int)$driveSpace->id)
+            ->orderBy("{$alias}.trashedAt", 'DESC')
+            ->addOrderBy("{$alias}.id", 'DESC')
+            ->setFirstResult(max(0, $offset))
+            ->setMaxResults(max(1, min(self::MAX_LIST_LIMIT, $limit)));
+        $driveNodes = $repoClass->find($queryBuilder, false);
+        return $driveNodes instanceof DriveNodes ? $driveNodes : new DriveNodes();
+    }
+
+    /**
+     * Every live folder of a space (the root included), flat, by name: a folder tree in one call. At most `$limit`
+     * (one more is read to tell a cut list).
+     */
+    public function findFoldersOfSpace(DriveSpace $driveSpace, int $limit = self::MAX_FOLDER_TREE_SIZE, bool $includeSystem = false): DriveNodes
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.nodeType = :nodeType")
+            ->andWhere("{$alias}.trashedAt IS NULL")
+            ->setParameter('driveSpaceId', (int)$driveSpace->id)
+            ->setParameter('nodeType', DriveNode::NODE_TYPE_FOLDER)
+            ->orderBy("{$alias}.nameSlot", 'ASC')
+            ->setMaxResults(max(1, min(self::MAX_FOLDER_TREE_SIZE, $limit)) + 1);
+        if (!$includeSystem) {
+            $queryBuilder->andWhere("{$alias}.isSystem = :isSystem")->setParameter('isSystem', false);
+        }
+        $driveNodes = $repoClass->find($queryBuilder, false);
+        return $driveNodes instanceof DriveNodes ? $driveNodes : new DriveNodes();
+    }
+
+    /**
+     * The list entries of nodes for a file manager: family, scan status of what each file shows, a pending newer
+     * version, uncommitted working-copy changes, people's display names, thumbnails of released raster images and,
+     * for trashed nodes, the purge date. A handful of batch queries for the whole page.
+     */
+    public function buildListItems(DriveNodes $driveNodes, DriveSpace $driveSpace): DriveNodeListItems
+    {
+        $versionIds = [];
+        $accountIds = [];
+        $nodeIds = [];
+        foreach ($driveNodes->getElements() as $driveNode) {
+            $nodeIds[] = (int)$driveNode->id;
+            foreach ([$driveNode->currentVersionId, $driveNode->latestVersionId] as $versionId) {
+                if ($versionId !== null) {
+                    $versionIds[] = (int)$versionId;
+                }
+            }
+            foreach ([$driveNode->createdByAccountId, $driveNode->trashedByAccountId] as $accountId) {
+                if ($accountId !== null) {
+                    $accountIds[] = (int)$accountId;
+                }
+            }
+        }
+        $driveFileVersionsById = [];
+        foreach ($this->getDriveVersionsService()->findVersionsByIds($versionIds)->getElements() as $driveFileVersion) {
+            $driveFileVersionsById[(int)$driveFileVersion->id] = $driveFileVersion;
+        }
+        $blobIds = [];
+        foreach ($driveFileVersionsById as $driveFileVersion) {
+            $blobIds[] = (int)$driveFileVersion->driveBlobId;
+        }
+        $driveBlobsById = [];
+        foreach ($this->getDriveBlobsService()->findBlobsByIds($blobIds)->getElements() as $driveBlob) {
+            $driveBlobsById[(int)$driveBlob->id] = $driveBlob;
+        }
+        $nodeIdsWithStagedChanges = array_flip($this->getDriveWorkingCopiesService()->findNodeIdsWithStagedChanges((int)$driveSpace->id, $nodeIds));
+        $accountDisplayNames = $this->findAccountDisplayNames($accountIds);
+        $thumbnailLifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
+        $driveNodeListItems = new DriveNodeListItems();
+        foreach ($driveNodes->getElements() as $driveNode) {
+            $driveNodeListItem = new DriveNodeListItem();
+            $driveNodeListItem->id = (int)$driveNode->id;
+            $driveNodeListItem->driveSpaceId = (int)$driveNode->driveSpaceId;
+            $driveNodeListItem->parentNodeId = $driveNode->parentNodeId;
+            $driveNodeListItem->nodeType = (string)$driveNode->nodeType;
+            $driveNodeListItem->name = (string)$driveNode->name;
+            $driveNodeListItem->description = $driveNode->description;
+            $driveNodeListItem->tags = $driveNode->getTagList();
+            $driveNodeListItem->isContentUntrusted = (bool)$driveNode->isContentUntrusted;
+            $driveNodeListItem->isSystem = (bool)$driveNode->isSystem;
+            $driveNodeListItem->hasWorkingCopyChanges = isset($nodeIdsWithStagedChanges[(int)$driveNode->id]);
+            $driveNodeListItem->createdByAccountId = $driveNode->createdByAccountId;
+            $driveNodeListItem->createdByName = $driveNode->createdByAccountId !== null ? ($accountDisplayNames[(int)$driveNode->createdByAccountId] ?? null) : null;
+            $driveNodeListItem->createdAt = $driveNode->getCreatedTime();
+            $driveNodeListItem->updatedAt = $driveNode->getLastEditTime();
+            $driveNodeListItem->trashedAt = $driveNode->trashedAt;
+            $driveNodeListItem->trashedByAccountId = $driveNode->trashedByAccountId;
+            $driveNodeListItem->trashedByName = $driveNode->trashedByAccountId !== null ? ($accountDisplayNames[(int)$driveNode->trashedByAccountId] ?? null) : null;
+            $driveNodeListItem->purgeAfter = $driveNode->trashedAt !== null
+                ? DateTime::fromTimestamp($driveNode->trashedAt->getTimestamp() + $driveSpace->getTrashRetentionDays() * 86400) : null;
+            if ($driveNode->isFolder()) {
+                $driveNodeListItem->childCount = (int)$driveNode->childCount;
+                $driveNodeListItems->add($driveNodeListItem);
+                continue;
+            }
+            $driveNodeListItem->extension = DriveFileFamily::findExtension((string)$driveNode->name);
+            $driveNodeListItem->family = DriveFileFamily::findFamily($driveNode->contentType, (string)$driveNode->name);
+            $driveNodeListItem->contentType = $driveNode->contentType;
+            $driveNodeListItem->sizeBytes = $driveNode->sizeBytes;
+            $driveNodeListItem->versionNumber = $driveNode->versionNumber;
+            $shownVersion = $driveFileVersionsById[(int)($driveNode->currentVersionId ?? $driveNode->latestVersionId)] ?? null;
+            $shownBlob = $shownVersion !== null ? ($driveBlobsById[(int)$shownVersion->driveBlobId] ?? null) : null;
+            $driveNodeListItem->scanStatus = $shownBlob?->findScanStatus();
+            $latestVersion = $driveFileVersionsById[(int)$driveNode->latestVersionId] ?? null;
+            $latestBlob = $latestVersion !== null ? ($driveBlobsById[(int)$latestVersion->driveBlobId] ?? null) : null;
+            $driveNodeListItem->hasPendingVersion = $driveNode->currentVersionId !== null
+                && $driveNode->latestVersionId !== null
+                && (int)$driveNode->latestVersionId !== (int)$driveNode->currentVersionId
+                && $latestBlob !== null
+                && in_array($latestBlob->findScanStatus(), [DriveBlob::SCAN_STATUS_UPLOADING, DriveBlob::SCAN_STATUS_PENDING], true);
+            if ($shownBlob !== null && $shownBlob->isReadableByPeople() && UntrustedContentHeaders::isInlineContentType($shownBlob->contentType)) {
+                $driveNodeListItem->thumbnailUrl = $this->getDriveBlobsService()->createDownloadRequestUrl($shownBlob, (string)$driveNode->name, false, $thumbnailLifetimeSeconds);
+            }
+            $driveNodeListItems->add($driveNodeListItem);
+        }
+        return $driveNodeListItems;
+    }
+
+    /**
+     * Display names of accounts (creator, uploader, who trashed, actors of the history), keyed by account id. The
+     * module knows no names: an application overrides this (same-path subclass of the service) with its own; an
+     * account without an entry shows its id only.
+     *
+     * @param int[] $accountIds
+     * @return string[] Display names keyed by account id
+     */
+    public function findAccountDisplayNames(array $accountIds): array
+    {
+        return [];
+    }
+
+    /**
+     * Moves up to {@see DriveNodeBulkResult::MAX_NODES} nodes of one space into a folder of it, in one transaction.
+     * A node that cannot move (a name taken there, a folder into itself, the root) is skipped with its reason.
+     *
+     * @param int[] $driveNodeIds
+     * @throws BadRequestException
+     */
+    public function moveNodes(DriveSpace $driveSpace, array $driveNodeIds, DriveNode $targetFolderNode): DriveNodeBulkResult
+    {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE);
+        if (!$targetFolderNode->isFolder() || $targetFolderNode->isTrashed() || (int)$targetFolderNode->driveSpaceId !== (int)$driveSpace->id) {
+            throw new BadRequestException('The target is no live folder of this space.');
+        }
+        return $this->applyBulkAction($driveSpace, $driveNodeIds, self::BULK_ACTION_MOVE, $targetFolderNode);
+    }
+
+    /**
+     * Trashes up to {@see DriveNodeBulkResult::MAX_NODES} nodes of one space in one transaction (folders with their
+     * subtree).
+     *
+     * @param int[] $driveNodeIds
+     * @throws BadRequestException
+     */
+    public function trashNodes(DriveSpace $driveSpace, array $driveNodeIds): DriveNodeBulkResult
+    {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE);
+        return $this->applyBulkAction($driveSpace, $driveNodeIds, self::BULK_ACTION_TRASH);
+    }
+
+    /**
+     * Restores up to {@see DriveNodeBulkResult::MAX_NODES} trashed nodes of one space in one transaction.
+     *
+     * @param int[] $driveNodeIds
+     * @throws BadRequestException
+     */
+    public function restoreNodes(DriveSpace $driveSpace, array $driveNodeIds): DriveNodeBulkResult
+    {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_WRITE);
+        return $this->applyBulkAction($driveSpace, $driveNodeIds, self::BULK_ACTION_RESTORE);
+    }
+
+    /**
+     * The nodes of a bulk request: distinct, at most {@see DriveNodeBulkResult::MAX_NODES}, all of the space.
+     *
+     * @param int[] $driveNodeIds
+     * @return int[]
+     * @throws BadRequestException
+     */
+    public static function normalizeBulkNodeIds(array $driveNodeIds): array
+    {
+        $normalizedNodeIds = [];
+        foreach ($driveNodeIds as $driveNodeId) {
+            if ((int)$driveNodeId > 0) {
+                $normalizedNodeIds[(int)$driveNodeId] = (int)$driveNodeId;
+            }
+        }
+        $normalizedNodeIds = array_values($normalizedNodeIds);
+        if ($normalizedNodeIds === []) {
+            throw new BadRequestException('No nodes given.');
+        }
+        if (count($normalizedNodeIds) > DriveNodeBulkResult::MAX_NODES) {
+            throw new BadRequestException(sprintf('At most %d nodes per request (%d given).', DriveNodeBulkResult::MAX_NODES, count($normalizedNodeIds)));
+        }
+        return $normalizedNodeIds;
+    }
+
+    /**
+     * Applies one action to the nodes in one transaction: a node of another space, or one the action refuses, is
+     * skipped with its reason; any other failure rolls everything back.
+     *
+     * @param int[] $driveNodeIds
+     * @throws BadRequestException
+     */
+    protected function applyBulkAction(DriveSpace $driveSpace, array $driveNodeIds, string $bulkAction, ?DriveNode $targetFolderNode = null): DriveNodeBulkResult
+    {
+        $driveNodeIds = static::normalizeBulkNodeIds($driveNodeIds);
+        $driveNodeBulkResult = new DriveNodeBulkResult();
+        $connection = EntityManagerFactory::getInstance()->getConnection();
+        $connection->beginTransaction();
+        try {
+            foreach ($driveNodeIds as $driveNodeId) {
+                $driveNode = $this->findNodeOfSpace($driveSpace, $driveNodeId);
+                if ($driveNode === null) {
+                    $driveNodeBulkResult->addSkip($driveNodeId, 'not found in this space');
+                    continue;
+                }
+                try {
+                    $this->applyBulkActionToNode($driveNode, $bulkAction, $targetFolderNode, $driveNodeBulkResult);
+                } catch (BadRequestException $refusal) {
+                    $driveNodeBulkResult->addSkip($driveNodeId, $refusal->getMessage());
+                }
+            }
+            $connection->commit();
+        } catch (Throwable $throwable) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            throw $throwable;
+        }
+        return $driveNodeBulkResult;
+    }
+
+    /**
+     * @throws BadRequestException
+     */
+    protected function applyBulkActionToNode(DriveNode $driveNode, string $bulkAction, ?DriveNode $targetFolderNode, DriveNodeBulkResult $driveNodeBulkResult): void
+    {
+        $isFolder = $driveNode->isFolder();
+        if ($bulkAction === self::BULK_ACTION_MOVE) {
+            if ($driveNode->isTrashed()) {
+                throw new BadRequestException('trashed');
+            }
+            $this->moveNode($driveNode, $targetFolderNode, null);
+        } elseif ($bulkAction === self::BULK_ACTION_TRASH) {
+            if ($driveNode->isTrashed()) {
+                throw new BadRequestException('already in the trash');
+            }
+            $this->trashNode($driveNode);
+        } else {
+            if (!$driveNode->isTrashed()) {
+                throw new BadRequestException('not in the trash');
+            }
+            if ($driveNode->trashedWithNodeId !== null) {
+                throw new BadRequestException('trashed with its folder: restore the folder');
+            }
+            $this->restoreNode($driveNode);
+        }
+        $driveNodeBulkResult->processedCount++;
+        $isFolder ? $driveNodeBulkResult->folderCount++ : $driveNodeBulkResult->fileCount++;
+    }
+
     /** Moves the live child counter of a folder */
     public function adjustChildCount(int $folderNodeId, int $delta): void
     {
@@ -540,5 +990,26 @@ class DriveNodesService extends EntitiesService
         /** @var DriveChangesService $driveChangesService */
         $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
         return $driveChangesService;
+    }
+
+    protected function getDriveVersionsService(): DriveVersionsService
+    {
+        /** @var DriveVersionsService $driveVersionsService */
+        $driveVersionsService = DDDService::instance()->getService(DriveVersionsService::class);
+        return $driveVersionsService;
+    }
+
+    protected function getDriveBlobsService(): DriveBlobsService
+    {
+        /** @var DriveBlobsService $driveBlobsService */
+        $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
+        return $driveBlobsService;
+    }
+
+    protected function getDriveWorkingCopiesService(): DriveWorkingCopiesService
+    {
+        /** @var DriveWorkingCopiesService $driveWorkingCopiesService */
+        $driveWorkingCopiesService = DDDService::instance()->getService(DriveWorkingCopiesService::class);
+        return $driveWorkingCopiesService;
     }
 }

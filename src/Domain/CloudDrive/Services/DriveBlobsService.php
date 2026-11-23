@@ -331,6 +331,25 @@ class DriveBlobsService extends EntitiesService
         return $driveBlobs instanceof DriveBlobs ? $driveBlobs : new DriveBlobs();
     }
 
+    /**
+     * Blobs by id (a list's batch lookup), under the caller's rights; missing ids are left out.
+     *
+     * @param int[] $driveBlobIds
+     */
+    public function findBlobsByIds(array $driveBlobIds): DriveBlobs
+    {
+        $driveBlobIds = array_values(array_unique(array_filter(array_map('intval', $driveBlobIds))));
+        if ($driveBlobIds === []) {
+            return new DriveBlobs();
+        }
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.id IN (:driveBlobIds)")->setParameter('driveBlobIds', $driveBlobIds);
+        $driveBlobs = $repoClass->find($queryBuilder, false);
+        return $driveBlobs instanceof DriveBlobs ? $driveBlobs : new DriveBlobs();
+    }
+
     public function findReleasedBlobBySha256(int $driveSpaceId, string $sha256): ?DriveBlob
     {
         $repoClass = $this->getEntityRepoClassInstance();

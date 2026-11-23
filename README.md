@@ -45,7 +45,16 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
 4. The REST endpoints: one controller with `use CloudDriveControllerTrait;` (`#[Route('/common/cloudDrive')]`).
    `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs. It is a POST
    (the references are a body) but only reads: a host write guard that classifies routes by method lets it through
-   like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links.
+   like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links. For a file
+   manager: `items` beside the entities on lists (family, scan status, pending version, uncommitted working-copy
+   changes, people's names, thumbnails, purge date); list filters on `…/children` and `…/search` (`recursive`,
+   `query`, `family`, `createdFrom`/`createdTo`, `createdByMe`, `orderBy` name/created/size, `orderDirection`);
+   `GET …/spaces/{id}/folders` (the folder tree), `…/spaces/{id}/trash`, `…/nodes/{id}/versions`, `…/nodes/{id}/events`;
+   `POST …/nodes/{id}/versions/{versionId}/restore`; bulk `POST …/spaces/{id}/nodes/move|trash|restore` (200 per
+   call, one transaction, skipped nodes with reasons); `POST …/spaces/{id}/nodes/purge` and `…/spaces/{id}/trash/empty`
+   (manage right). The space answers carry a quota block and, for pickers, `displayName` and `groupLabel`
+   (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()`, default the title and the kind's
+   `label`); people's names come from `DriveNodesService::findAccountDisplayNames()` — override both in the host.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
    failed scans and lost ingests again, the blob sweep. A scan takes seconds (clamscan loads its signatures each
    time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport

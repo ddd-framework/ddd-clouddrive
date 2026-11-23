@@ -342,6 +342,30 @@ class DriveWorkingCopiesService extends EntitiesService
         return $driveWorkingCopyEntries instanceof DriveWorkingCopyEntries ? $driveWorkingCopyEntries : new DriveWorkingCopyEntries();
     }
 
+    /**
+     * The nodes among `$driveNodeIds` that a working copy of the space holds saved, uncommitted changes of.
+     *
+     * @param int[] $driveNodeIds
+     * @return int[]
+     */
+    public function findNodeIdsWithStagedChanges(int $driveSpaceId, array $driveNodeIds): array
+    {
+        $driveNodeIds = array_values(array_unique(array_filter(array_map('intval', $driveNodeIds))));
+        if ($driveNodeIds === []) {
+            return [];
+        }
+        $repoClass = new DBDriveWorkingCopyEntries();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->select("DISTINCT {$alias}.driveNodeId")
+            ->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.driveNodeId IN (:driveNodeIds)")
+            ->setParameter('driveSpaceId', $driveSpaceId)
+            ->setParameter('driveNodeIds', $driveNodeIds);
+        DBDriveWorkingCopyEntry::applyReadRightsQuery($queryBuilder);
+        return array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+    }
+
     public function findEntryByPath(DriveWorkingCopy $driveWorkingCopy, string $path): ?DriveWorkingCopyEntry
     {
         $repoClass = new DBDriveWorkingCopyEntry();

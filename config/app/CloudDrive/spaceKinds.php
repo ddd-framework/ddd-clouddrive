@@ -16,5 +16,6 @@ return [
         'keptVersions' => 20,
         'versionRetentionDays' => 90,
         'trashRetentionDays' => 30,
+        // optional: the group a space picker lists spaces of this kind under (`label` => 'Libraries')
     ],
 ];

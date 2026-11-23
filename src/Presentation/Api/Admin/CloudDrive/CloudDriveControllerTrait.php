@@ -7,46 +7,63 @@ namespace DDD\Presentation\Api\Admin\CloudDrive;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListQuery;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
+use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
+use DDD\Domain\CloudDrive\Services\DriveMaintenanceService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
+use DDD\Infrastructure\Base\DateTime\Date;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
+use DDD\Infrastructure\Services\AuthService;
+use DDD\Infrastructure\Services\DDDService;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveChangeEventsGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveChildrenGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveContentGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveContentGrantResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFileCardsRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFileCardsResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFileVersionsGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFolderCreateRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFoldersGetRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFoldersGetResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeEventsGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeMetadataRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeMoveRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSearchGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpacesGetResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveTrashGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadCompleteRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadPartsRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadReservationResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadReserveRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveVersionRestoreRequestDto;
 use DDD\Presentation\Base\OpenApi\Attributes\Summary;
 use DDD\Presentation\Base\Router\Routes\Get;
 use DDD\Presentation\Base\Router\Routes\Post;
 
 /**
  * The drive screen's backend: spaces, folders, files, uploads (reserve, parts, complete), content URLs, file cards,
- * move, tags, trash and restore, name search. A host mounts it with one controller that sets the path prefix, the tag
+ * move, tags, trash and restore, name search, filtered lists, the folder tree, the trash list, versions and their
+ * restore, a node's history, bulk move / trash / restore, purge and emptying the trash. A host mounts it with one controller that sets the path prefix, the tag
  * and the access (`#[Route('/common/cloudDrive')] class AdminCloudDriveController extends AdminController { use
  * CloudDriveControllerTrait; }`). Every read and write runs under the host's space rights; the access hook
  * {@see throwForbiddenUnlessCloudDriveAccessAllowed()} runs first in every action.
@@ -69,6 +86,7 @@ trait CloudDriveControllerTrait
         $responseDto = new DriveSpacesGetResponseDto();
         $driveSpaces = $driveSpacesService->findAll(null, 500, false);
         $responseDto->driveSpaces = $driveSpaces instanceof DriveSpaces ? $driveSpaces : new DriveSpaces();
+        $responseDto->items = $driveSpacesService->buildSpaceListItems($responseDto->driveSpaces);
         return $responseDto;
     }
 
@@ -85,11 +103,17 @@ trait CloudDriveControllerTrait
         $this->throwForbiddenUnlessCloudDriveAccessAllowed();
         $responseDto = new DriveSpaceGetResponseDto();
         $responseDto->driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
+        $responseDto->item = $driveSpacesService->buildSpaceListItem(
+            $responseDto->driveSpace,
+            $driveSpacesService->hasRightOnSpace($responseDto->driveSpace, DBDriveSpace::RIGHT_WRITE),
+            $driveSpacesService->hasRightOnSpace($responseDto->driveSpace, DBDriveSpace::RIGHT_MANAGE)
+        );
         return $responseDto;
     }
 
     /**
-     * One page of a folder (the root when no folder is given).
+     * One page of a folder (the root when no folder is given); with filters, another order or `recursive` one page
+     * of the matching nodes of the folder or the whole space.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -103,19 +127,13 @@ trait CloudDriveControllerTrait
     ): DriveNodesGetResponseDto {
         $this->throwForbiddenUnlessCloudDriveAccessAllowed();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
-        $folderNode = $requestDto->folderNodeId !== null
-            ? $driveNodesService->findNodeOfSpace($driveSpace, $requestDto->folderNodeId)
-            : $driveNodesService->findRootNode($driveSpace);
-        if ($folderNode === null || !$folderNode->isFolder()) {
-            throw new NotFoundException('Folder not found.');
-        }
         $limit = max(1, min(DriveNodesService::MAX_LIST_LIMIT, $requestDto->limit ?? 100));
-        $includeSystem = (bool)$requestDto->includeSystem || $driveSpacesService->hasRightOnSpace($driveSpace, DBDriveSpace::RIGHT_MANAGE);
-        $responseDto = new DriveNodesGetResponseDto();
-        $responseDto->driveNodes = $driveNodesService->findChildren($folderNode, $requestDto->cursor, $limit, $includeSystem);
-        $lastNode = $responseDto->driveNodes->getElements() !== [] ? array_values($responseDto->driveNodes->getElements())[$responseDto->driveNodes->count() - 1] : null;
-        $responseDto->nextCursor = $lastNode !== null && $responseDto->driveNodes->count() >= $limit ? DriveNodesService::buildListCursor($lastNode) : null;
-        return $responseDto;
+        $driveNodeListQuery = $this->buildDriveNodeListQuery($requestDto, $limit);
+        $driveNodeListQuery->folderNodeId = $requestDto->folderNodeId;
+        $driveNodeListQuery->isRecursive = (bool)$requestDto->recursive;
+        $driveNodeListQuery->nameQuery = $requestDto->query !== null && trim($requestDto->query) !== '' ? trim($requestDto->query) : null;
+        $driveNodeListQuery->includeSystem = (bool)$requestDto->includeSystem || $driveSpacesService->hasRightOnSpace($driveSpace, DBDriveSpace::RIGHT_MANAGE);
+        return $this->buildDriveNodesListResponse($driveSpace, $driveNodeListQuery, $requestDto->cursor, $driveNodesService);
     }
 
     /**
@@ -376,7 +394,7 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * Files and folders of a space whose name contains the query.
+     * Files and folders of a space whose name contains the query; with filters or an order, one page of them.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -390,8 +408,316 @@ trait CloudDriveControllerTrait
     ): DriveNodesGetResponseDto {
         $this->throwForbiddenUnlessCloudDriveAccessAllowed();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
+        $driveNodeListQuery = $this->buildDriveNodeListQuery($requestDto, max(1, min(200, $requestDto->limit ?? 50)));
+        if ($driveNodeListQuery->isPlainFolderListing()) {
+            $responseDto = new DriveNodesGetResponseDto();
+            $responseDto->driveNodes = $driveNodesService->searchNodesByName([(int)$driveSpace->id], $requestDto->query, $requestDto->limit ?? 50);
+            $responseDto->items = $driveNodesService->buildListItems($responseDto->driveNodes, $driveSpace);
+            return $responseDto;
+        }
+        $driveNodeListQuery->isRecursive = true;
+        $driveNodeListQuery->nameQuery = $requestDto->query;
+        return $this->buildDriveNodesListResponse($driveSpace, $driveNodeListQuery, $requestDto->cursor, $driveNodesService);
+    }
+
+    /**
+     * One page of a space's trash: what was trashed on its own (a folder holds what it took along), most recently
+     * trashed first, with who trashed it and when the maintenance deletes it for good.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Get('/spaces/{driveSpaceId}/trash')]
+    #[Summary('DriveNodes Trash List')]
+    public function listDriveTrash(
+        DriveTrashGetRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveNodesGetResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
+        $limit = max(1, min(DriveNodesService::MAX_LIST_LIMIT, $requestDto->limit ?? 100));
+        $offset = DriveNodesService::parseOffsetCursor($requestDto->cursor) ?? 0;
         $responseDto = new DriveNodesGetResponseDto();
-        $responseDto->driveNodes = $driveNodesService->searchNodesByName([(int)$driveSpace->id], $requestDto->query, $requestDto->limit ?? 50);
+        $responseDto->driveNodes = $driveNodesService->findTrashedNodes($driveSpace, $offset, $limit);
+        $responseDto->items = $driveNodesService->buildListItems($responseDto->driveNodes, $driveSpace);
+        $responseDto->nextCursor = $responseDto->driveNodes->count() >= $limit ? DriveNodesService::buildOffsetCursor($offset + $limit) : null;
+        return $responseDto;
+    }
+
+    /**
+     * Every live folder of a space, flat (the root included): a folder tree in one call.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Get('/spaces/{driveSpaceId}/folders')]
+    #[Summary('DriveFolders List')]
+    public function listDriveFolders(
+        DriveFoldersGetRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveFoldersGetResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
+        $includeSystem = (bool)$requestDto->includeSystem || $driveSpacesService->hasRightOnSpace($driveSpace, DBDriveSpace::RIGHT_MANAGE);
+        $folderNodes = $driveNodesService->findFoldersOfSpace($driveSpace, DriveNodesService::MAX_FOLDER_TREE_SIZE, $includeSystem);
+        $responseDto = new DriveFoldersGetResponseDto();
+        $responseDto->isTruncated = $folderNodes->count() > DriveNodesService::MAX_FOLDER_TREE_SIZE;
+        $keptFolderNodes = new DriveNodes();
+        foreach (array_slice($folderNodes->getElements(), 0, DriveNodesService::MAX_FOLDER_TREE_SIZE) as $folderNode) {
+            $keptFolderNodes->add($folderNode);
+        }
+        $responseDto->items = $driveNodesService->buildListItems($keptFolderNodes, $driveSpace);
+        return $responseDto;
+    }
+
+    /**
+     * The version history of a file, newest first: scan status, author, comment, which one the file shows, which can
+     * be restored.
+     *
+     * @throws NotFoundException
+     */
+    #[Get('/nodes/{driveNodeId}/versions')]
+    #[Summary('DriveFileVersions List')]
+    public function listDriveFileVersions(
+        DriveNodeGetRequestDto $requestDto,
+        DriveNodesService $driveNodesService,
+        DriveVersionsService $driveVersionsService
+    ): DriveFileVersionsGetResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
+        $responseDto = new DriveFileVersionsGetResponseDto();
+        $responseDto->items = $driveVersionsService->buildVersionListItems($driveNode, $driveVersionsService->findVersionsOfNode($driveNode, 500));
+        return $responseDto;
+    }
+
+    /**
+     * Makes an older version the newest again (its released content; no bytes are copied). A version the scan
+     * blocked or that waits for its scan cannot be restored.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws InternalErrorException
+     */
+    #[Post('/nodes/{driveNodeId}/versions/{driveFileVersionId}/restore')]
+    #[Summary('DriveFileVersion Restore')]
+    public function restoreDriveFileVersion(
+        DriveVersionRestoreRequestDto $requestDto,
+        DriveNodesService $driveNodesService,
+        DriveVersionsService $driveVersionsService
+    ): DriveNodeGetResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
+        $driveFileVersion = $driveVersionsService->find($requestDto->driveFileVersionId, false);
+        if (!$driveFileVersion instanceof DriveFileVersion || (int)$driveFileVersion->driveNodeId !== (int)$driveNode->id) {
+            throw new NotFoundException('Version not found.');
+        }
+        $driveFileWriteResult = $driveVersionsService->restoreVersion($driveNode, $driveFileVersion);
+        if ($driveFileWriteResult->isConflict) {
+            throw new BadRequestException('Not restored: ' . $driveFileWriteResult->conflictReason);
+        }
+        return $this->buildDriveNodeResponse($driveFileWriteResult->driveNode ?? $driveNode, $driveNodesService, $driveVersionsService);
+    }
+
+    /**
+     * The newest history entries of a file or folder (created, versioned, released, blocked, moved, renamed, trashed,
+     * restored …), newest first.
+     *
+     * @throws NotFoundException
+     */
+    #[Get('/nodes/{driveNodeId}/events')]
+    #[Summary('DriveNode History')]
+    public function listDriveNodeEvents(
+        DriveNodeEventsGetRequestDto $requestDto,
+        DriveNodesService $driveNodesService,
+        DriveChangesService $driveChangesService
+    ): DriveChangeEventsGetResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
+        $responseDto = new DriveChangeEventsGetResponseDto();
+        $responseDto->items = $driveChangesService->buildChangeEventListItems(
+            $driveChangesService->findChangesOfNode($driveNode, $requestDto->limit ?? DriveChangesService::DEFAULT_NODE_HISTORY_LIMIT)
+        );
+        return $responseDto;
+    }
+
+    /**
+     * Moves files and folders of a space into one of its folders (at most 200, one transaction); what cannot move
+     * is skipped with its reason.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/move')]
+    #[Summary('DriveNodes Bulk Move')]
+    public function moveDriveNodes(
+        DriveNodesBulkRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveNodesBulkResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $targetFolderNode = $requestDto->targetFolderNodeId !== null
+            ? $driveNodesService->findNodeOfSpace($driveSpace, $requestDto->targetFolderNodeId)
+            : $driveNodesService->findRootNode($driveSpace);
+        if ($targetFolderNode === null) {
+            throw new NotFoundException('Target folder not found.');
+        }
+        $responseDto = new DriveNodesBulkResponseDto();
+        $responseDto->result = $driveNodesService->moveNodes($driveSpace, $requestDto->driveNodeIds, $targetFolderNode);
+        return $responseDto;
+    }
+
+    /**
+     * Moves files and folders of a space to its trash (at most 200, one transaction; folders with their subtree).
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/trash')]
+    #[Summary('DriveNodes Bulk Trash')]
+    public function trashDriveNodes(
+        DriveNodesBulkRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveNodesBulkResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $responseDto = new DriveNodesBulkResponseDto();
+        $responseDto->result = $driveNodesService->trashNodes($driveSpace, $requestDto->driveNodeIds);
+        return $responseDto;
+    }
+
+    /**
+     * Restores trashed files and folders of a space (at most 200, one transaction).
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/restore')]
+    #[Summary('DriveNodes Bulk Restore')]
+    public function restoreDriveNodes(
+        DriveNodesBulkRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveNodesBulkResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $responseDto = new DriveNodesBulkResponseDto();
+        $responseDto->result = $driveNodesService->restoreNodes($driveSpace, $requestDto->driveNodeIds);
+        return $responseDto;
+    }
+
+    /**
+     * Deletes trashed files and folders of a space for good, now (at most 200; needs the manage right): their
+     * versions, their content in the store, and the quota they held.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/purge')]
+    #[Summary('DriveNodes Purge')]
+    public function purgeDriveNodes(
+        DriveNodesBulkRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveMaintenanceService $driveMaintenanceService
+    ): DriveNodesBulkResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_MANAGE);
+        $responseDto = new DriveNodesBulkResponseDto();
+        $responseDto->result = $driveMaintenanceService->purgeTrashedNodes($driveSpace, $requestDto->driveNodeIds);
+        return $responseDto;
+    }
+
+    /**
+     * Empties a space's trash for good (needs the manage right); at most 200 trashed nodes per call — `hasMore`
+     * asks for another call.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/trash/empty')]
+    #[Summary('DriveTrash Empty')]
+    public function emptyDriveTrash(
+        DriveSpaceGetRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveMaintenanceService $driveMaintenanceService
+    ): DriveNodesBulkResponseDto {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_MANAGE);
+        $responseDto = new DriveNodesBulkResponseDto();
+        $responseDto->result = $driveMaintenanceService->emptyTrash($driveSpace);
+        return $responseDto;
+    }
+
+    /**
+     * The list query of a request's filters (family, creation window, own uploads, order).
+     *
+     * @throws BadRequestException
+     */
+    protected function buildDriveNodeListQuery(DriveChildrenGetRequestDto|DriveSearchGetRequestDto $requestDto, int $limit): DriveNodeListQuery
+    {
+        $driveNodeListQuery = new DriveNodeListQuery();
+        $driveNodeListQuery->limit = $limit;
+        $driveNodeListQuery->family = $requestDto->family !== null && $requestDto->family !== '' ? strtoupper($requestDto->family) : null;
+        $driveNodeListQuery->createdFrom = $this->parseDriveListDate($requestDto->createdFrom, 'createdFrom');
+        $driveNodeListQuery->createdTo = $this->parseDriveListDate($requestDto->createdTo, 'createdTo');
+        if ($requestDto->createdByMe) {
+            $authAccount = AuthService::instance()->getAccount();
+            $driveNodeListQuery->createdByAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : 0;
+        }
+        if ($requestDto->orderBy !== null && $requestDto->orderBy !== '') {
+            $driveNodeListQuery->orderBy = strtolower($requestDto->orderBy);
+        }
+        if ($requestDto->orderDirection !== null && $requestDto->orderDirection !== '') {
+            $orderDirection = strtolower($requestDto->orderDirection);
+            if (!in_array($orderDirection, [DriveNodeListQuery::DIRECTION_ASC, DriveNodeListQuery::DIRECTION_DESC], true)) {
+                throw new BadRequestException('orderDirection is asc or desc.');
+            }
+            $driveNodeListQuery->orderDirection = $orderDirection;
+        }
+        return $driveNodeListQuery;
+    }
+
+    /**
+     * @throws BadRequestException
+     */
+    protected function parseDriveListDate(?string $dateString, string $parameterName): ?Date
+    {
+        if ($dateString === null || trim($dateString) === '') {
+            return null;
+        }
+        $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', trim($dateString)) === 1 ? Date::fromString(trim($dateString)) : false;
+        if (!$date instanceof Date) {
+            throw new BadRequestException(sprintf('%s is a day as Y-m-d.', $parameterName));
+        }
+        return $date;
+    }
+
+    /**
+     * @throws BadRequestException
+     * @throws NotFoundException
+     */
+    protected function buildDriveNodesListResponse(DriveSpace $driveSpace, DriveNodeListQuery $driveNodeListQuery, ?string $cursor, DriveNodesService $driveNodesService): DriveNodesGetResponseDto
+    {
+        $responseDto = new DriveNodesGetResponseDto();
+        $responseDto->driveNodes = $driveNodesService->findNodesByListQuery($driveSpace, $driveNodeListQuery, $cursor);
+        $responseDto->items = $driveNodesService->buildListItems($responseDto->driveNodes, $driveSpace);
+        $pageSize = $responseDto->driveNodes->count();
+        if ($pageSize < $driveNodeListQuery->limit) {
+            return $responseDto;
+        }
+        if ($driveNodeListQuery->isPlainFolderListing()) {
+            $lastNode = array_values($responseDto->driveNodes->getElements())[$pageSize - 1];
+            $responseDto->nextCursor = DriveNodesService::buildListCursor($lastNode);
+        } else {
+            $responseDto->nextCursor = DriveNodesService::buildOffsetCursor((DriveNodesService::parseOffsetCursor($cursor) ?? $driveNodeListQuery->offset) + $pageSize);
+        }
         return $responseDto;
     }
 
@@ -427,6 +753,14 @@ trait CloudDriveControllerTrait
         $responseDto->path = $driveNodesService->buildPath($driveNode);
         $responseDto->ancestors = $driveNodesService->findAncestors($driveNode);
         $responseDto->driveFileVersions = $driveNode->isFile() ? $driveVersionsService->findVersionsOfNode($driveNode, 50) : null;
+        /** @var DriveSpacesService $driveSpacesService */
+        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+        $driveSpace = $driveSpacesService->findSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
+        if ($driveSpace !== null) {
+            $driveNodes = new DriveNodes();
+            $driveNodes->add($driveNode);
+            $responseDto->item = $driveNodesService->buildListItems($driveNodes, $driveSpace)->first();
+        }
         return $responseDto;
     }
 }

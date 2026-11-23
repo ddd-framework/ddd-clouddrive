@@ -11,6 +11,8 @@ use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
+use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionListItem;
+use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionListItems;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWriteResult;
@@ -39,6 +41,9 @@ use Throwable;
 class DriveVersionsService extends EntitiesService
 {
     public const DEFAULT_ENTITY_CLASS = DriveFileVersion::class;
+
+    /** @var string The comment of a restored version (`%d` = the restored version's number) */
+    public const string RESTORED_VERSION_COMMENT = 'Restored from v%d';
 
     /**
      * Writes a file at `$name` in a folder: a new node when none is live there (and none is expected), else a new
@@ -275,6 +280,123 @@ class DriveVersionsService extends EntitiesService
             ->setMaxResults(max(1, min(500, $limit)));
         $driveFileVersions = $repoClass->find($queryBuilder, false);
         return $driveFileVersions instanceof DriveFileVersions ? $driveFileVersions : new DriveFileVersions();
+    }
+
+    /**
+     * Versions by id (a list's batch lookup), under the caller's rights; missing ids are left out.
+     *
+     * @param int[] $driveFileVersionIds
+     */
+    public function findVersionsByIds(array $driveFileVersionIds): DriveFileVersions
+    {
+        $driveFileVersionIds = array_values(array_unique(array_filter(array_map('intval', $driveFileVersionIds))));
+        if ($driveFileVersionIds === []) {
+            return new DriveFileVersions();
+        }
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.id IN (:driveFileVersionIds)")->setParameter('driveFileVersionIds', $driveFileVersionIds);
+        $driveFileVersions = $repoClass->find($queryBuilder, false);
+        return $driveFileVersions instanceof DriveFileVersions ? $driveFileVersions : new DriveFileVersions();
+    }
+
+    /**
+     * Makes an older version the newest again: a new version on top of the file's write head with the old version's
+     * released content (no bytes are copied; the blob is shared, so the quota does not grow). Only released content
+     * is restored — a version the scan blocked, or one still waiting for its scan, is refused.
+     *
+     * @throws BadRequestException
+     * @throws InternalErrorException
+     */
+    public function restoreVersion(DriveNode $driveNode, DriveFileVersion $driveFileVersion): DriveFileWriteResult
+    {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        if (!$driveNode->isFile() || $driveNode->isTrashed()) {
+            throw new BadRequestException('Only a live file has versions to restore.');
+        }
+        if ((int)$driveFileVersion->driveNodeId !== (int)$driveNode->id) {
+            throw new BadRequestException(sprintf('Version %d is no version of this file.', (int)$driveFileVersion->id));
+        }
+        $driveBlob = $this->getDriveBlobsService()->find((int)$driveFileVersion->driveBlobId, false);
+        $restoreRefusalReason = static::findRestoreRefusalReason($driveBlob);
+        if ($restoreRefusalReason !== null) {
+            throw new BadRequestException(sprintf('Version %d cannot be restored: %s.', (int)$driveFileVersion->versionNumber, $restoreRefusalReason));
+        }
+        $driveFileWrite = new DriveFileWrite();
+        $driveFileWrite->driveBlobId = (int)$driveBlob->id;
+        $driveFileWrite->comment = sprintf(static::RESTORED_VERSION_COMMENT, (int)$driveFileVersion->versionNumber);
+        $driveFileWrite->origin = DriveNode::ORIGIN_UPLOAD;
+        $driveFileWrite->isContentUntrusted = (bool)$driveFileVersion->isContentUntrusted;
+        $driveFileWrite->copiedFromVersionId = (int)$driveFileVersion->id;
+        $driveFileWrite->ignoresExpectedVersion = true;
+        $authAccount = AuthService::instance()->getAccount();
+        $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        $driveFileWriteResult = $this->writeVersionOfNode($driveNode, $driveBlob, $driveFileWrite);
+        if ($driveFileWriteResult->driveFileVersion !== null) {
+            // the content is released already: the read head moves at once
+            $this->releaseVersion($driveFileWriteResult->driveFileVersion, $driveBlob);
+            $freshNode = $this->getDriveNodesService()->find((int)$driveNode->id, false);
+            $driveFileWriteResult->driveNode = $freshNode instanceof DriveNode ? $freshNode : $driveFileWriteResult->driveNode;
+        }
+        return $driveFileWriteResult;
+    }
+
+    /** Why a version's content cannot be restored; null when it can (released by the scan) */
+    public static function findRestoreRefusalReason(?DriveBlob $driveBlob): ?string
+    {
+        if (!$driveBlob instanceof DriveBlob) {
+            return 'its content is gone';
+        }
+        return match ($driveBlob->state) {
+            DriveBlob::STATE_RELEASED => null,
+            DriveBlob::STATE_BLOCKED => 'the malware scan blocked its content',
+            DriveBlob::STATE_PURGING => 'its content is being deleted',
+            default => 'its content is not released (it waits for its scan, or the scan could not run)',
+        };
+    }
+
+    /**
+     * The version history of a file for a file manager: scan status of each blob, author names, which version the
+     * file shows and which is its newest, and whether each can be restored.
+     */
+    public function buildVersionListItems(DriveNode $driveNode, DriveFileVersions $driveFileVersions): DriveFileVersionListItems
+    {
+        $driveBlobIds = [];
+        $authorAccountIds = [];
+        foreach ($driveFileVersions->getElements() as $driveFileVersion) {
+            $driveBlobIds[] = (int)$driveFileVersion->driveBlobId;
+            if ($driveFileVersion->authorAccountId !== null) {
+                $authorAccountIds[] = (int)$driveFileVersion->authorAccountId;
+            }
+        }
+        $driveBlobsById = [];
+        foreach ($this->getDriveBlobsService()->findBlobsByIds($driveBlobIds)->getElements() as $driveBlob) {
+            $driveBlobsById[(int)$driveBlob->id] = $driveBlob;
+        }
+        $accountDisplayNames = $this->getDriveNodesService()->findAccountDisplayNames($authorAccountIds);
+        $driveFileVersionListItems = new DriveFileVersionListItems();
+        foreach ($driveFileVersions->getElements() as $driveFileVersion) {
+            $driveBlob = $driveBlobsById[(int)$driveFileVersion->driveBlobId] ?? null;
+            $driveFileVersionListItem = new DriveFileVersionListItem();
+            $driveFileVersionListItem->id = (int)$driveFileVersion->id;
+            $driveFileVersionListItem->driveNodeId = (int)$driveFileVersion->driveNodeId;
+            $driveFileVersionListItem->versionNumber = (int)$driveFileVersion->versionNumber;
+            $driveFileVersionListItem->sizeBytes = $driveFileVersion->sizeBytes;
+            $driveFileVersionListItem->contentType = $driveBlob?->contentType ?? $driveFileVersion->contentType;
+            $driveFileVersionListItem->comment = $driveFileVersion->comment;
+            $driveFileVersionListItem->origin = $driveFileVersion->origin;
+            $driveFileVersionListItem->authorAccountId = $driveFileVersion->authorAccountId;
+            $driveFileVersionListItem->authorName = $driveFileVersion->authorAccountId !== null ? ($accountDisplayNames[(int)$driveFileVersion->authorAccountId] ?? null) : null;
+            $driveFileVersionListItem->createdAt = $driveFileVersion->getCreatedTime();
+            $driveFileVersionListItem->scanStatus = $driveBlob?->findScanStatus();
+            $driveFileVersionListItem->scanDetail = $driveBlob?->stateReason;
+            $driveFileVersionListItem->isCurrent = (int)$driveFileVersion->id === (int)$driveNode->currentVersionId;
+            $driveFileVersionListItem->isLatest = (int)$driveFileVersion->id === (int)$driveNode->latestVersionId;
+            $driveFileVersionListItem->isRestorable = !$driveFileVersionListItem->isLatest && static::findRestoreRefusalReason($driveBlob) === null;
+            $driveFileVersionListItems->add($driveFileVersionListItem);
+        }
+        return $driveFileVersionListItems;
     }
 
     /**

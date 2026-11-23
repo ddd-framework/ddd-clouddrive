@@ -6,6 +6,8 @@ namespace DDD\Domain\CloudDrive\Services;
 
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
+use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEventListItem;
+use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEventListItems;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvents;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvent;
@@ -26,6 +28,10 @@ class DriveChangesService extends EntitiesService
     public const DEFAULT_ENTITY_CLASS = DriveChangeEvent::class;
 
     public const int MAX_CHANGES_PER_PAGE = 5000;
+
+    public const int DEFAULT_NODE_HISTORY_LIMIT = 20;
+
+    public const int MAX_NODE_HISTORY_LIMIT = 200;
 
     /** Records one change of a node; the caller has checked the right already */
     public function recordChange(
@@ -77,6 +83,51 @@ class DriveChangesService extends EntitiesService
         }
         $driveChangeEvents = $repoClass->find($queryBuilder, false);
         return $driveChangeEvents instanceof DriveChangeEvents ? $driveChangeEvents : new DriveChangeEvents();
+    }
+
+    /** The newest changes of one node, newest first, under the caller's rights */
+    public function findChangesOfNode(DriveNode $driveNode, int $limit = self::DEFAULT_NODE_HISTORY_LIMIT): DriveChangeEvents
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.driveNodeId = :driveNodeId")
+            ->setParameter('driveSpaceId', (int)$driveNode->driveSpaceId)
+            ->setParameter('driveNodeId', (int)$driveNode->id)
+            ->orderBy("{$alias}.id", 'DESC')
+            ->setMaxResults(max(1, min(self::MAX_NODE_HISTORY_LIMIT, $limit)));
+        $driveChangeEvents = $repoClass->find($queryBuilder, false);
+        return $driveChangeEvents instanceof DriveChangeEvents ? $driveChangeEvents : new DriveChangeEvents();
+    }
+
+    /** The history entries of changes, with the actors' display names ({@see DriveNodesService::findAccountDisplayNames()}) */
+    public function buildChangeEventListItems(DriveChangeEvents $driveChangeEvents): DriveChangeEventListItems
+    {
+        $actorAccountIds = [];
+        foreach ($driveChangeEvents->getElements() as $driveChangeEvent) {
+            if ($driveChangeEvent->actorAccountId !== null) {
+                $actorAccountIds[] = (int)$driveChangeEvent->actorAccountId;
+            }
+        }
+        /** @var DriveNodesService $driveNodesService */
+        $driveNodesService = DDDService::instance()->getService(DriveNodesService::class);
+        $accountDisplayNames = $driveNodesService->findAccountDisplayNames($actorAccountIds);
+        $driveChangeEventListItems = new DriveChangeEventListItems();
+        foreach ($driveChangeEvents->getElements() as $driveChangeEvent) {
+            $driveChangeEventListItem = new DriveChangeEventListItem();
+            $driveChangeEventListItem->id = (int)$driveChangeEvent->id;
+            $driveChangeEventListItem->eventType = (string)$driveChangeEvent->eventType;
+            $driveChangeEventListItem->occurredAt = $driveChangeEvent->getCreatedTime();
+            $driveChangeEventListItem->actorAccountId = $driveChangeEvent->actorAccountId;
+            $driveChangeEventListItem->actorName = $driveChangeEvent->actorAccountId !== null ? ($accountDisplayNames[(int)$driveChangeEvent->actorAccountId] ?? null) : null;
+            $driveChangeEventListItem->path = $driveChangeEvent->path;
+            $driveChangeEventListItem->previousPath = $driveChangeEvent->previousPath;
+            $driveChangeEventListItem->driveFileVersionId = $driveChangeEvent->driveFileVersionId;
+            $driveChangeEventListItem->isFromWorkingCopy = $driveChangeEvent->workingCopyKey !== null;
+            $driveChangeEventListItems->add($driveChangeEventListItem);
+        }
+        return $driveChangeEventListItems;
     }
 
     /** The newest change id of a space; 0 without changes */

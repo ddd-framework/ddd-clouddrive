@@ -7,6 +7,9 @@ namespace DDD\Domain\CloudDrive\Services;
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceListItem;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceListItems;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceQuota;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
 use DDD\Domain\CloudDrive\Repo\DB\DBDriveSpaceScopedEntity;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
@@ -174,6 +177,95 @@ class DriveSpacesService extends EntitiesService
             ->setParameter('folderDelta', $folderDelta)
             ->setParameter('driveSpaceId', $driveSpaceId)
             ->getQuery()->execute();
+    }
+
+    /**
+     * The ids among `$driveSpaceIds` the caller has `$right` on (one query for a whole list).
+     *
+     * @param int[] $driveSpaceIds
+     * @return int[]
+     */
+    public function findSpaceIdsWithRight(array $driveSpaceIds, string $right): array
+    {
+        $driveSpaceIds = array_values(array_unique(array_filter(array_map('intval', $driveSpaceIds))));
+        if ($driveSpaceIds === []) {
+            return [];
+        }
+        /** @var DBDriveSpace $driveSpaceRepoClass */
+        $driveSpaceRepoClass = DBDriveSpaceScopedEntity::getDriveSpaceRepoClass();
+        $queryBuilder = $driveSpaceRepoClass::createQueryBuilder(true);
+        $alias = $driveSpaceRepoClass::getBaseModelAlias();
+        $queryBuilder->select("{$alias}.id")->andWhere("{$alias}.id IN (:driveSpaceIds)")->setParameter('driveSpaceIds', $driveSpaceIds);
+        $driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($queryBuilder, $alias, $right);
+        return array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+    }
+
+    /** The quota of a space and its counters (what counts: {@see DriveSpaceQuota}) */
+    public function buildSpaceQuota(DriveSpace $driveSpace): DriveSpaceQuota
+    {
+        $driveSpaceQuota = new DriveSpaceQuota();
+        $driveSpaceQuota->usedBytes = (int)$driveSpace->usedBytes;
+        $driveSpaceQuota->quotaBytes = $driveSpace->getEffectiveQuotaBytes();
+        $driveSpaceQuota->maxFileSizeBytes = $driveSpace->getEffectiveMaxFileSizeBytes();
+        $driveSpaceQuota->fileCount = (int)$driveSpace->fileCount;
+        $driveSpaceQuota->folderCount = (int)$driveSpace->folderCount;
+        $driveSpaceQuota->trashRetentionDays = $driveSpace->getTrashRetentionDays();
+        $driveSpaceQuota->keptVersionCount = $driveSpace->getKeptVersionCount();
+        $driveSpaceQuota->versionRetentionDays = $driveSpace->getVersionRetentionDays();
+        return $driveSpaceQuota;
+    }
+
+    /** The spaces as a space picker lists them: display name, group, quota and the caller's write and manage rights */
+    public function buildSpaceListItems(DriveSpaces $driveSpaces): DriveSpaceListItems
+    {
+        $driveSpaceIds = [];
+        foreach ($driveSpaces->getElements() as $driveSpace) {
+            $driveSpaceIds[] = (int)$driveSpace->id;
+        }
+        $writableSpaceIds = array_flip($this->findSpaceIdsWithRight($driveSpaceIds, DBDriveSpace::RIGHT_WRITE));
+        $managedSpaceIds = array_flip($this->findSpaceIdsWithRight($driveSpaceIds, DBDriveSpace::RIGHT_MANAGE));
+        $driveSpaceListItems = new DriveSpaceListItems();
+        foreach ($driveSpaces->getElements() as $driveSpace) {
+            $driveSpaceListItem = $this->buildSpaceListItem($driveSpace, isset($writableSpaceIds[(int)$driveSpace->id]), isset($managedSpaceIds[(int)$driveSpace->id]));
+            $driveSpaceListItems->add($driveSpaceListItem);
+        }
+        return $driveSpaceListItems;
+    }
+
+    /** One space as a picker shows it */
+    public function buildSpaceListItem(DriveSpace $driveSpace, bool $canWrite, bool $canManage): DriveSpaceListItem
+    {
+        $driveSpaceListItem = new DriveSpaceListItem();
+        $driveSpaceListItem->id = (int)$driveSpace->id;
+        $driveSpaceListItem->title = $driveSpace->title;
+        $driveSpaceListItem->displayName = $this->buildSpaceDisplayName($driveSpace);
+        $driveSpaceListItem->groupLabel = $this->buildSpaceGroupLabel($driveSpace);
+        $driveSpaceListItem->spaceKind = $driveSpace->spaceKind;
+        $driveSpaceListItem->audience = $driveSpace->audience;
+        $driveSpaceListItem->rootNodeId = $driveSpace->rootNodeId;
+        $driveSpaceListItem->quota = $this->buildSpaceQuota($driveSpace);
+        $driveSpaceListItem->canWrite = $canWrite;
+        $driveSpaceListItem->canManage = $canManage;
+        return $driveSpaceListItem;
+    }
+
+    /**
+     * The name a picker shows for the space. Override in the application (same-path subclass of this service) to show
+     * the name of what the space belongs to (its anchor).
+     */
+    public function buildSpaceDisplayName(DriveSpace $driveSpace): string
+    {
+        return $driveSpace->buildDisplayTitle();
+    }
+
+    /**
+     * The group a picker lists the space under: the kind's `label` (`config/app/CloudDrive/spaceKinds.php`), else
+     * null (no group). Override in the application for its own grouping.
+     */
+    public function buildSpaceGroupLabel(DriveSpace $driveSpace): ?string
+    {
+        $groupLabel = $driveSpace->getSpaceKindSetting('label');
+        return is_string($groupLabel) && $groupLabel !== '' ? $groupLabel : null;
     }
 
     /** The model class of the application's space repository */

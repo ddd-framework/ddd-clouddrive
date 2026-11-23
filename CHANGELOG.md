@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.0-rc.10
+
+- Added (file manager backend, all on `CloudDriveControllerTrait`, same access hook and space rights):
+  - `items` beside the entities on every list (`DriveNodeListItem`: family, extension, scan status of what the file
+    shows, `hasPendingVersion`, `hasWorkingCopyChanges`, creator / trasher names, thumbnail URL of a released JPEG,
+    PNG, GIF or WebP, `purgeAfter` in the trash); `item` on the node answer.
+  - List filters on `GET …/spaces/{id}/children` and `…/search`: `recursive`, `query`, `family` (`DriveFileFamily`:
+    PDF, SPREADSHEET, DOCUMENT, PRESENTATION, TEXT, IMAGE, VECTOR, VIDEO, ARCHIVE), `createdFrom` / `createdTo`
+    (`Y-m-d`), `createdByMe`, `orderBy` (`name`, `created`, `size`), `orderDirection`; a filtered or reordered list
+    pages with an offset cursor (`o:<n>`). Without them both answer as before.
+  - `GET …/spaces/{id}/folders` (every live folder flat, at most 5000, `isTruncated`), `GET …/spaces/{id}/trash`
+    (nodes trashed on their own, newest first), `GET …/nodes/{id}/versions` (`DriveFileVersionListItem`: scan status,
+    author, `isCurrent`, `isLatest`, `isRestorable`), `GET …/nodes/{id}/events` (the node's history, newest 20).
+  - `POST …/nodes/{id}/versions/{versionId}/restore`: the old version's released content becomes the newest version
+    (`Restored from v<n>`, no bytes copied, the blob is shared); blocked or unscanned content is refused.
+  - Bulk `POST …/spaces/{id}/nodes/move`, `…/trash`, `…/restore` (`driveNodeIds`, at most 200, one transaction;
+    `DriveNodeBulkResult` with counts and skipped nodes with reasons).
+  - `POST …/spaces/{id}/nodes/purge` and `…/spaces/{id}/trash/empty` (manage right): trashed nodes are deleted for
+    good now (subtree, versions, a PURGED change), their unreferenced blobs are deleted from the store and their bytes
+    given back to the quota; emptying purges 200 per call (`hasMore`).
+  - Spaces: `items` on the list and `item` on one space (`DriveSpaceListItem`: `displayName`, `groupLabel`,
+    `DriveSpaceQuota`, `canWrite`, `canManage`). Hooks for hosts: `DriveSpacesService::buildSpaceDisplayName()`,
+    `buildSpaceGroupLabel()` (default: the title, the kind's `label` setting), `DriveNodesService::findAccountDisplayNames()`
+    (default: none).
+- Fixed: a folder listing put files before folders (it ordered by the node type's name); folders come first now, the
+  page cursor of older clients keeps working.
+- No schema change.
+
 ## 0.1.0-rc.9
 
 - Changed (untrusted input, needs mgamadeus/ddd ^3.40.0): the malware scan is a scanner contract that fails closed.

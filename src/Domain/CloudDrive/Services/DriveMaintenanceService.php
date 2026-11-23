@@ -8,6 +8,8 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeBulkResult;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeCounts;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
@@ -19,10 +21,15 @@ use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
 use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlobs;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNodes;
+use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersions;
 use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopyEntry;
+use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
 use DDD\Infrastructure\Base\DateTime\DateTime;
+use DDD\Infrastructure\Exceptions\BadRequestException;
+use DDD\Infrastructure\Exceptions\ForbiddenException;
+use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
@@ -37,6 +44,9 @@ use Throwable;
 class DriveMaintenanceService extends Service
 {
     public const int BATCH_SIZE = 500;
+
+    /** @var int Trashed nodes one empty-trash call purges at most */
+    public const int MAX_NODES_PER_EMPTY_TRASH = 200;
 
     /**
      * @return string[]
@@ -215,15 +225,18 @@ class DriveMaintenanceService extends Service
 
     /**
      * Removes blobs nothing needs: unfinished uploads and staged blobs past their expiry that no entry and no version
-     * references, and blobs marked for purge.
+     * references, and blobs marked for purge; of one space when `$driveSpaceId` is given.
      *
      * @return string[]
      */
-    public function sweepBlobs(bool $isDryRun): array
+    public function sweepBlobs(bool $isDryRun, ?int $driveSpaceId = null): array
     {
         $repoClass = new DBDriveBlobs();
         $queryBuilder = $repoClass::createQueryBuilder(true);
         $alias = $repoClass::getBaseModelAlias();
+        if ($driveSpaceId !== null) {
+            $queryBuilder->andWhere("{$alias}.driveSpaceId = :sweptDriveSpaceId")->setParameter('sweptDriveSpaceId', $driveSpaceId);
+        }
         $versionModel = DBDriveFileVersion::BASE_ORM_MODEL;
         $entryModel = DBDriveWorkingCopyEntry::BASE_ORM_MODEL;
         $queryBuilder->andWhere("({$alias}.state = :purgingState OR ({$alias}.state IN (:expiringStates) AND {$alias}.expiresAt < :now))")
@@ -296,9 +309,105 @@ class DriveMaintenanceService extends Service
         return [sprintf('erased drive space %d (%d objects)', $driveSpaceId, count($storageKeys ?? []))];
     }
 
-    /** Deletes a node (a folder with everything below it) and its versions; their blobs are swept when unreferenced */
-    public function purgeNode(DriveNode $driveNode): void
+    /**
+     * Deletes trashed nodes of a space for good, now: each with its subtree and versions, a PURGED change each; then
+     * the space's blobs nothing references any more are deleted from the store and their bytes given back to the
+     * quota. Needs the manage right on the space. A node that is not in the trash, or was trashed with its folder, is
+     * skipped with its reason.
+     *
+     * @param int[] $driveNodeIds
+     * @throws BadRequestException
+     * @throws ForbiddenException
+     * @throws NotFoundException
+     */
+    public function purgeTrashedNodes(DriveSpace $driveSpace, array $driveNodeIds): DriveNodeBulkResult
     {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_MANAGE);
+        $driveNodeIds = DriveNodesService::normalizeBulkNodeIds($driveNodeIds);
+        $driveNodeBulkResult = new DriveNodeBulkResult();
+        $trashedNodes = new DriveNodes();
+        foreach ($driveNodeIds as $driveNodeId) {
+            $driveNode = $this->getDriveNodesService()->findNodeOfSpace($driveSpace, $driveNodeId);
+            $skipReason = match (true) {
+                $driveNode === null => 'not found in this space',
+                !$driveNode->isTrashed() => 'not in the trash',
+                $driveNode->trashedWithNodeId !== null => 'trashed with its folder: purge the folder',
+                default => null,
+            };
+            if ($skipReason !== null) {
+                $driveNodeBulkResult->addSkip($driveNodeId, $skipReason);
+                continue;
+            }
+            $trashedNodes->add($driveNode);
+        }
+        $this->purgeNodesOfSpace($driveSpace, $trashedNodes, $driveNodeBulkResult);
+        return $driveNodeBulkResult;
+    }
+
+    /**
+     * Empties a space's trash for good (see {@see purgeTrashedNodes()}); at most {@see MAX_NODES_PER_EMPTY_TRASH}
+     * trashed nodes per call — `hasMore` asks for another call.
+     *
+     * @throws ForbiddenException
+     * @throws NotFoundException
+     */
+    public function emptyTrash(DriveSpace $driveSpace): DriveNodeBulkResult
+    {
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_MANAGE);
+        $driveNodeBulkResult = new DriveNodeBulkResult();
+        $trashedNodes = $this->getDriveNodesService()->findTrashedNodes($driveSpace, 0, self::MAX_NODES_PER_EMPTY_TRASH + 1);
+        $trashedNodesToPurge = new DriveNodes();
+        foreach ($trashedNodes->getElements() as $trashedNode) {
+            if ($trashedNodesToPurge->count() >= self::MAX_NODES_PER_EMPTY_TRASH) {
+                $driveNodeBulkResult->hasMore = true;
+                break;
+            }
+            $trashedNodesToPurge->add($trashedNode);
+        }
+        $this->purgeNodesOfSpace($driveSpace, $trashedNodesToPurge, $driveNodeBulkResult);
+        return $driveNodeBulkResult;
+    }
+
+    /**
+     * Purges the given trashed nodes in one transaction, then sweeps the space's unreferenced blobs (store deletes
+     * are no part of a transaction; a sweep that fails is redone by the maintenance).
+     */
+    protected function purgeNodesOfSpace(DriveSpace $driveSpace, DriveNodes $trashedNodes, DriveNodeBulkResult $driveNodeBulkResult): void
+    {
+        if ($trashedNodes->count() === 0) {
+            return;
+        }
+        $connection = EntityManagerFactory::getInstance()->getConnection();
+        $connection->beginTransaction();
+        try {
+            foreach ($trashedNodes->getElements() as $trashedNode) {
+                $purgedCounts = new DriveNodeCounts();
+                $this->purgeNode($trashedNode, $purgedCounts);
+                $driveNodeBulkResult->processedCount++;
+                $driveNodeBulkResult->fileCount += $purgedCounts->fileCount;
+                $driveNodeBulkResult->folderCount += $purgedCounts->folderCount;
+            }
+            $connection->commit();
+        } catch (Throwable $throwable) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            throw $throwable;
+        }
+        DDDService::instance()->deactivateEntityRightsRestrictions();
+        try {
+            $this->sweepBlobs(false, (int)$driveSpace->id);
+        } finally {
+            DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
+        }
+    }
+
+    /** Deletes a node (a folder with everything below it) and its versions; their blobs are swept when unreferenced */
+    public function purgeNode(DriveNode $driveNode, ?DriveNodeCounts $purgedCounts = null): void
+    {
+        if ($purgedCounts !== null) {
+            $driveNode->isFolder() ? $purgedCounts->folderCount++ : $purgedCounts->fileCount++;
+        }
         if ($driveNode->isFolder()) {
             $repoClass = new DBDriveNodes();
             $queryBuilder = $repoClass::createQueryBuilder(true);
@@ -306,7 +415,7 @@ class DriveMaintenanceService extends Service
             $queryBuilder->andWhere("{$alias}.parentNodeId = :parentNodeId")->setParameter('parentNodeId', (int)$driveNode->id);
             $childNodes = $repoClass->find($queryBuilder, false);
             foreach (($childNodes instanceof DriveNodes ? $childNodes->getElements() : []) as $childNode) {
-                $this->purgeNode($childNode);
+                $this->purgeNode($childNode, $purgedCounts);
             }
         }
         foreach ($this->getDriveVersionsService()->findVersionsOfNode($driveNode, 500)->getElements() as $driveFileVersion) {
@@ -349,6 +458,13 @@ class DriveMaintenanceService extends Service
         $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
         $driveSpaces = $driveSpacesService->findAll(null, 10000, false);
         return $driveSpaces instanceof DriveSpaces ? $driveSpaces : new DriveSpaces();
+    }
+
+    protected function getDriveSpacesService(): DriveSpacesService
+    {
+        /** @var DriveSpacesService $driveSpacesService */
+        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+        return $driveSpacesService;
     }
 
     protected function getDriveNodesService(): DriveNodesService

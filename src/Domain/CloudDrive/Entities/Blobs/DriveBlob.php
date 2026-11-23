@@ -48,6 +48,18 @@ class DriveBlob extends Entity
         self::STATE_BLOCKED, self::STATE_SCAN_FAILED, self::STATE_FAILED, self::STATE_PURGING,
     ];
 
+    /** The scan status a file manager shows ({@see findScanStatus()}) */
+    public const string SCAN_STATUS_UPLOADING = 'UPLOADING';
+    public const string SCAN_STATUS_PENDING = 'PENDING';
+    public const string SCAN_STATUS_CLEAN = 'CLEAN';
+    public const string SCAN_STATUS_INFECTED = 'INFECTED';
+    public const string SCAN_STATUS_FAILED = 'FAILED';
+    public const string SCAN_STATUS_PURGING = 'PURGING';
+    public const array SCAN_STATUSES = [
+        self::SCAN_STATUS_UPLOADING, self::SCAN_STATUS_PENDING, self::SCAN_STATUS_CLEAN, self::SCAN_STATUS_INFECTED,
+        self::SCAN_STATUS_FAILED, self::SCAN_STATUS_PURGING,
+    ];
+
     #[NotNull]
     #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;
@@ -101,5 +113,21 @@ class DriveBlob extends Entity
     public function isReadableByPeople(): bool
     {
         return $this->state === self::STATE_RELEASED;
+    }
+
+    /**
+     * The blob's state as a file manager names it: UPLOADING, PENDING (staged or waiting for its scan), CLEAN
+     * (released), INFECTED (blocked by the scan), FAILED (the scan could not run, or the upload failed), PURGING.
+     */
+    public function findScanStatus(): string
+    {
+        return match ($this->state) {
+            self::STATE_UPLOADING => self::SCAN_STATUS_UPLOADING,
+            self::STATE_RELEASED => self::SCAN_STATUS_CLEAN,
+            self::STATE_BLOCKED => self::SCAN_STATUS_INFECTED,
+            self::STATE_SCAN_FAILED, self::STATE_FAILED => self::SCAN_STATUS_FAILED,
+            self::STATE_PURGING => self::SCAN_STATUS_PURGING,
+            default => self::SCAN_STATUS_PENDING,
+        };
     }
 }
