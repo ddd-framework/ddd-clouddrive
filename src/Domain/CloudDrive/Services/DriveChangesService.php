@@ -12,8 +12,10 @@ use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEventListItem;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEventListItems;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvents;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvent;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvents;
+use DDD\Infrastructure\Base\DateTime\DateTime;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
@@ -250,6 +252,8 @@ class DriveChangesService extends EntitiesService
             $driveChangeEventListItem->audience = $driveActivityEvent->audience;
             $driveChangeEventListItem->contentVariant = $driveActivityEvent->contentVariant;
             $driveChangeEventListItem->detail = $driveActivityEvent->detail;
+            // the client's IP is personal data of the person who accessed: staff only, never in a SHARED answer
+            $driveChangeEventListItem->clientIp = $audience === DriveSpace::AUDIENCE_INTERNAL ? ($driveActivityEvent->clientIp ?? null) : null;
             $driveChangeEventListItem->driveFileVersionId = $driveActivityEvent->driveFileVersionId;
             $this->applyActorNames($driveChangeEventListItem, $driveActorNamesService, $audience, $accountDisplayNames);
             $historyListItems[] = $driveChangeEventListItem;
@@ -312,5 +316,62 @@ class DriveChangesService extends EntitiesService
             ->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
             ->setParameter('driveSpaceId', $driveSpaceId);
         return (int)$queryBuilder->getQuery()->getSingleScalarResult();
+    }
+
+    /**
+     * Ids of access events (`DriveChangeEvent::ACCESS_EVENT_TYPES`, e.g. `READ_BY_AGENT`) in the change table created
+     * before `$createdBefore`, oldest first; changes of other types are never selected.
+     *
+     * @return int[]
+     */
+    public function findAccessEventIdsCreatedBefore(DateTime $createdBefore, int $limit): array
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->select("{$alias}.id")
+            ->andWhere("{$alias}.eventType IN (:accessEventTypes)")
+            ->andWhere("{$alias}.created < :createdBefore")
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->setParameter('createdBefore', $createdBefore->format('Y-m-d H:i:s'))
+            ->orderBy("{$alias}.id", 'ASC')
+            ->setMaxResults(max(1, $limit));
+        return array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+    }
+
+    /**
+     * The number of access events in the change table created before `$createdBefore` (a dry run of the retention).
+     */
+    public function countAccessEventsCreatedBefore(DateTime $createdBefore): int
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->select("COUNT({$alias}.id)")
+            ->andWhere("{$alias}.eventType IN (:accessEventTypes)")
+            ->andWhere("{$alias}.created < :createdBefore")
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->setParameter('createdBefore', $createdBefore->format('Y-m-d H:i:s'));
+        return (int)$queryBuilder->getQuery()->getSingleScalarResult();
+    }
+
+    /**
+     * Deletes access events of the change table by id; an id of another event type is left alone.
+     *
+     * @param int[] $driveChangeEventIds
+     * @return int rows deleted
+     */
+    public function deleteAccessEventsByIds(array $driveChangeEventIds): int
+    {
+        $driveChangeEventIds = array_values(array_unique(array_filter(array_map('intval', $driveChangeEventIds))));
+        if ($driveChangeEventIds === []) {
+            return 0;
+        }
+        return (int)DBDriveChangeEvent::createQueryBuilder()->delete(DBDriveChangeEvent::BASE_ORM_MODEL, 'changeEvent')
+            ->where('changeEvent.id IN (:driveChangeEventIds)')
+            ->andWhere('changeEvent.eventType IN (:accessEventTypes)')
+            ->setParameter('driveChangeEventIds', $driveChangeEventIds)
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->getQuery()->execute();
     }
 }

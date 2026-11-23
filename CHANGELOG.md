@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-rc.13
+
+- Added (retention): `CloudDrive.settings.accessEventRetentionDays` (default 0 = unlimited). Above 0, `app:drive:maintain`
+  deletes accesses older than that many days where they are stored: `READ_BY_AGENT` from the change feed (with its
+  context rows), `VIEWED` / `DOWNLOADED` from `DriveActivityEvents` (skipped without the table); at most
+  `DriveMaintenanceService::MAX_ACCESS_EVENT_PURGE_BATCHES` × `BATCH_SIZE` (20 × 500) rows per table and run, one line
+  with the counts (`--dryRun` counts). Changes of every other type are never deleted by age (only with their space).
+  Hook: `DriveMaintenanceService::getAccessEventRetentionDays()`.
+- Added (accesses): the client's public IP of a VIEWED / DOWNLOADED in the new nullable column
+  `DriveActivityEvents.clientIp` (VARCHAR(45), IPv4 or IPv6) from Symfony's `Request::getClientIp()` under the host's
+  trusted proxies (a forwarding header is never read raw; hook `DriveActivityEventsService::findClientIpOfCurrentRequest()`);
+  null for agent reads and the console. The dedup key stays actor + node + version + type: the first IP of the window
+  is kept. History items carry `clientIp` only for the INTERNAL audience, never in a SHARED answer.
+- Schema: the host's schema diff adds `DriveActivityEvents.clientIp` (`VARCHAR(45) DEFAULT NULL`). Until then the
+  column is neither written nor read (checked once per process like the table; restart the workers after adding it)
+  and everything else keeps working.
+
 ## 0.1.0-rc.12
 
 - Added (space list): `DriveSpaceListItem::$displayGroup` (a group code for ordering and icons) from the host hook

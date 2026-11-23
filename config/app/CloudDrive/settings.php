@@ -25,6 +25,10 @@ return [
     // an access (a preview opened: VIEWED, an original downloaded: DOWNLOADED) by the same person of the same file and
     // version within this many seconds is recorded once; 0 = every grant
     'accessEventDedupSeconds' => 600,
+    // accesses (VIEWED, DOWNLOADED, READ_BY_AGENT) older than this many days are deleted by app:drive:maintain;
+    // 0 or null = kept as long as the space (the default; a host sets e.g. 365). Changes (created, moved, trashed …)
+    // are never deleted by age.
+    'accessEventRetentionDays' => 0,
     // the maintenance redoes the ingest of a version whose blob waits longer than this (a lost worker run)
     'staleIngestMinutes' => 15,
     // the malware scanner of the ingest, by name (DriveMalwareScanner::getScannerName(), or its class): 'clamscan'

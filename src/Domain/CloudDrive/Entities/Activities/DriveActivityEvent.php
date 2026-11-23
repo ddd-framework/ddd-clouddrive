@@ -80,4 +80,13 @@ class DriveActivityEvent extends Entity
     #[Length(max: 500)]
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
     public ?string $detail = null;
+
+    /**
+     * @var string|null The public IP of the person's client of an access (IPv4 or IPv6, Symfony's
+     *      `Request::getClientIp()` under the host's trusted proxies; never a raw forwarding header); null for agent
+     *      reads, the console and rows written before the column existed. Shown to the INTERNAL audience only.
+     */
+    #[Length(max: 45)]
+    #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
+    public ?string $clientIp = null;
 }

@@ -20,7 +20,10 @@ folders and versioned files whose bytes live in object storage, working copies f
   reservation, at every write and at the ingest (the bytes must fit the name; programs are refused).
 - **Activity**: accesses (VIEWED, DOWNLOADED, recorded when a content URL is granted, deduplicated), the application's
   own events (`DriveChangesService::recordHostEvent()`) and on-behalf-of context, in the table `DriveActivityEvents`,
-  merged into a node's history.
+  merged into a node's history. An access keeps the client's public IP (`clientIp`, Symfony's `Request::getClientIp()`
+  under the host's trusted proxies; null for agent reads and the console), shown only in INTERNAL answers. Changes are
+  kept as long as the space; accesses (VIEWED, DOWNLOADED, READ_BY_AGENT) too, unless the host sets
+  `CloudDrive.settings.accessEventRetentionDays` (default 0 = unlimited; e.g. 365), which the maintenance enforces.
 - **Transfers** between spaces with a preview (`DriveSpaceTransfersService`, `DriveSpaceTransferListener` for the
   application's links), purge notifications (`DriveNodeLifecycleListener`).
 - **Files**: folders, files, versions (`DriveFileVersion`) and blobs (`DriveBlob`). Names are case-sensitive and
@@ -79,7 +82,8 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    `DriveSpaceTransferListener`, `DriveNodeLifecycleListener`, `DriveSvgSanitizer`.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
    failed scans and lost ingests again (blobs an early release stored BLOCKED after a failed scan are put back first),
-   the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`). A scan takes seconds (clamscan loads its signatures each
+   the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`), and — only with
+   `accessEventRetentionDays` above 0 — the deletion of older accesses (at most 20 × 500 rows per table and run). A scan takes seconds (clamscan loads its signatures each
    time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
    `drive_ingest` and give it a consumer (worker list).
 6. The malware scanner (`CloudDrive.settings.malwareScanner`, default `clamscan` with the limits of the `clamscan`

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace DDD\Domain\CloudDrive\Services;
 
+use DDD\DDDBundle;
+use DDD\Domain\Base\Repo\DB\Doctrine\DoctrineQueryBuilder;
 use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Activities\DriveActivityEvent;
@@ -20,6 +22,8 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Throwable;
 
 /**
@@ -43,6 +47,12 @@ class DriveActivityEventsService extends EntitiesService
 
     /** @var bool[] Whether the activity table exists, per table name and process */
     protected static array $isTableAvailableByTableName = [];
+
+    /** @var string The column added after the table (rc.13): read and written only when the table has it */
+    public const string CLIENT_IP_COLUMN_NAME = 'clientIp';
+
+    /** @var bool[] Whether the activity table has the `clientIp` column, per table name and process */
+    protected static array $isClientIpColumnAvailableByTableName = [];
 
     /**
      * Records that a person opened a preview (INLINE: `VIEWED`) or downloaded the original (DOWNLOAD: `DOWNLOADED`) of
@@ -71,6 +81,7 @@ class DriveActivityEventsService extends EntitiesService
         $driveActivityEvent = $this->buildActivityEvent($driveNode, $eventType, $actorAccountId, $onBehalfOfAccountId, $audience);
         $driveActivityEvent->driveFileVersionId = $driveContentGrant->driveFileVersionId;
         $driveActivityEvent->contentVariant = $driveContentGrant->purpose;
+        $driveActivityEvent->clientIp = $this->findClientIpOfCurrentRequest();
         return $this->storeActivityEvent($driveActivityEvent, $driveNode);
     }
 
@@ -137,6 +148,7 @@ class DriveActivityEventsService extends EntitiesService
         if ($eventTypes !== null) {
             $queryBuilder->andWhere("{$alias}.eventType IN (:eventTypes)")->setParameter('eventTypes', array_values($eventTypes));
         }
+        $this->selectOnlyExistingColumns($queryBuilder, $alias);
         try {
             $driveActivityEvents = $repoClass->find($queryBuilder, false);
         } catch (Throwable $throwable) {
@@ -161,6 +173,7 @@ class DriveActivityEventsService extends EntitiesService
         $queryBuilder = $repoClass::createQueryBuilder(true);
         $alias = $repoClass::getBaseModelAlias();
         $queryBuilder->andWhere("{$alias}.driveChangeEventId IN (:driveChangeEventIds)")->setParameter('driveChangeEventIds', $driveChangeEventIds);
+        $this->selectOnlyExistingColumns($queryBuilder, $alias);
         try {
             $driveActivityEvents = $repoClass->find($queryBuilder, false);
         } catch (Throwable $throwable) {
@@ -181,6 +194,86 @@ class DriveActivityEventsService extends EntitiesService
     }
 
     /**
+     * Ids of accesses (`DriveChangeEvent::ACCESS_EVENT_TYPES`) of the activity table created before `$createdBefore`,
+     * oldest first; context rows of changes and host events are never selected. Empty without the table.
+     *
+     * @return int[]
+     */
+    public function findAccessEventIdsCreatedBefore(DateTime $createdBefore, int $limit): array
+    {
+        if (!$this->isActivityTableAvailable()) {
+            return [];
+        }
+        $queryBuilder = DBDriveActivityEvent::createQueryBuilder(true);
+        $alias = DBDriveActivityEvent::getBaseModelAlias();
+        $queryBuilder->select("{$alias}.id")
+            ->andWhere("{$alias}.eventType IN (:accessEventTypes)")
+            ->andWhere("{$alias}.driveChangeEventId IS NULL")
+            ->andWhere("{$alias}.created < :createdBefore")
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->setParameter('createdBefore', $createdBefore->format('Y-m-d H:i:s'))
+            ->orderBy("{$alias}.id", 'ASC')
+            ->setMaxResults(max(1, $limit));
+        return array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+    }
+
+    /** The number of accesses of the activity table created before `$createdBefore`; 0 without the table */
+    public function countAccessEventsCreatedBefore(DateTime $createdBefore): int
+    {
+        if (!$this->isActivityTableAvailable()) {
+            return 0;
+        }
+        $queryBuilder = DBDriveActivityEvent::createQueryBuilder(true);
+        $alias = DBDriveActivityEvent::getBaseModelAlias();
+        $queryBuilder->select("COUNT({$alias}.id)")
+            ->andWhere("{$alias}.eventType IN (:accessEventTypes)")
+            ->andWhere("{$alias}.driveChangeEventId IS NULL")
+            ->andWhere("{$alias}.created < :createdBefore")
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->setParameter('createdBefore', $createdBefore->format('Y-m-d H:i:s'));
+        return (int)$queryBuilder->getQuery()->getSingleScalarResult();
+    }
+
+    /**
+     * Deletes accesses of the activity table by id; a context row or host event with one of the ids is left alone.
+     *
+     * @param int[] $driveActivityEventIds
+     * @return int rows deleted
+     */
+    public function deleteAccessEventsByIds(array $driveActivityEventIds): int
+    {
+        $driveActivityEventIds = array_values(array_unique(array_filter(array_map('intval', $driveActivityEventIds))));
+        if ($driveActivityEventIds === [] || !$this->isActivityTableAvailable()) {
+            return 0;
+        }
+        return (int)DBDriveActivityEvent::createQueryBuilder()->delete(DBDriveActivityEvent::BASE_ORM_MODEL, 'activity')
+            ->where('activity.id IN (:driveActivityEventIds)')
+            ->andWhere('activity.eventType IN (:accessEventTypes)')
+            ->andWhere('activity.driveChangeEventId IS NULL')
+            ->setParameter('driveActivityEventIds', $driveActivityEventIds)
+            ->setParameter('accessEventTypes', DriveChangeEvent::ACCESS_EVENT_TYPES)
+            ->getQuery()->execute();
+    }
+
+    /**
+     * Deletes the context rows of the given changes (their changes were deleted); nothing without the table.
+     *
+     * @param int[] $driveChangeEventIds
+     * @return int rows deleted
+     */
+    public function deleteContextsOfChangeEvents(array $driveChangeEventIds): int
+    {
+        $driveChangeEventIds = array_values(array_unique(array_filter(array_map('intval', $driveChangeEventIds))));
+        if ($driveChangeEventIds === [] || !$this->isActivityTableAvailable()) {
+            return 0;
+        }
+        return (int)DBDriveActivityEvent::createQueryBuilder()->delete(DBDriveActivityEvent::BASE_ORM_MODEL, 'activity')
+            ->where('activity.driveChangeEventId IN (:driveChangeEventIds)')
+            ->setParameter('driveChangeEventIds', $driveChangeEventIds)
+            ->getQuery()->execute();
+    }
+
+    /**
      * Whether the activity table exists: checked once per process (a table added later is noticed by the next
      * process, e.g. after the workers' restart); false when the application leaves it out of its schema.
      */
@@ -198,10 +291,67 @@ class DriveActivityEventsService extends EntitiesService
         return static::$isTableAvailableByTableName[$tableName];
     }
 
-    /** Forgets the table check (tests, a schema applied in the same process) */
+    /**
+     * Whether the activity table has the `clientIp` column (added in rc.13): checked once per process like the table;
+     * without it the column is neither written nor read.
+     */
+    public function isClientIpColumnAvailable(): bool
+    {
+        $tableName = DBDriveActivityEvent::BASE_ORM_MODEL::getTableName();
+        if (!array_key_exists($tableName, static::$isClientIpColumnAvailableByTableName)) {
+            $isClientIpColumnAvailable = false;
+            if ($this->isActivityTableAvailable()) {
+                try {
+                    foreach (EntityManagerFactory::getInstance()->getConnection()->createSchemaManager()->listTableColumns($tableName) as $tableColumn) {
+                        if (strcasecmp($tableColumn->getName(), static::CLIENT_IP_COLUMN_NAME) === 0) {
+                            $isClientIpColumnAvailable = true;
+                            break;
+                        }
+                    }
+                } catch (Throwable) {
+                    $isClientIpColumnAvailable = false;
+                }
+            }
+            static::$isClientIpColumnAvailableByTableName[$tableName] = $isClientIpColumnAvailable;
+        }
+        return static::$isClientIpColumnAvailableByTableName[$tableName];
+    }
+
+    /**
+     * The public IP of the current request's client: Symfony's `Request::getClientIp()`, which honours the host's
+     * trusted proxies (a forwarding header counts only from a trusted proxy; never read raw); null without a request
+     * (console, worker) or for a value that is no IP.
+     */
+    public function findClientIpOfCurrentRequest(): ?string
+    {
+        try {
+            $requestStack = DDDBundle::getContainer()->get('request_stack', ContainerInterface::NULL_ON_INVALID_REFERENCE);
+            $clientIp = $requestStack instanceof RequestStack ? $requestStack->getCurrentRequest()?->getClientIp() : null;
+        } catch (Throwable) {
+            return null;
+        }
+        return is_string($clientIp) && filter_var($clientIp, FILTER_VALIDATE_IP) !== false ? substr($clientIp, 0, 45) : null;
+    }
+
+    /** Forgets the table and column checks (tests, a schema applied in the same process) */
     public static function forgetActivityTableCheck(): void
     {
         static::$isTableAvailableByTableName = [];
+        static::$isClientIpColumnAvailableByTableName = [];
+    }
+
+    /**
+     * Without the `clientIp` column a full select of the model would name it: the query then loads the other columns
+     * only (a partial select of the mapped fields).
+     */
+    protected function selectOnlyExistingColumns(DoctrineQueryBuilder $queryBuilder, string $alias): void
+    {
+        if ($this->isClientIpColumnAvailable()) {
+            return;
+        }
+        $fieldNames = EntityManagerFactory::getInstance()->getClassMetadata(DBDriveActivityEvent::BASE_ORM_MODEL)->getFieldNames();
+        $fieldNames = array_values(array_filter($fieldNames, static fn (string $fieldName) => $fieldName !== static::CLIENT_IP_COLUMN_NAME));
+        $queryBuilder->select('partial ' . $alias . '.{' . implode(', ', $fieldNames) . '}');
     }
 
     protected function hasRecentAccess(DriveNode $driveNode, ?int $driveFileVersionId, string $eventType, ?int $actorAccountId): bool
@@ -245,6 +395,10 @@ class DriveActivityEventsService extends EntitiesService
 
     protected function storeActivityEvent(DriveActivityEvent $driveActivityEvent, ?DriveNode $driveNode): ?DriveActivityEvent
     {
+        if (!$this->isClientIpColumnAvailable()) {
+            // an uninitialised property is left out of the insert: a table from before the column keeps working
+            unset($driveActivityEvent->clientIp);
+        }
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
             /** @var DriveActivityEvent $storedActivityEvent */

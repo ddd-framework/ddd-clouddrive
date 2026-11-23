@@ -51,6 +51,9 @@ class DBDriveActivityEventModel extends DoctrineModel
 	#[ORM\Column(type: 'string')]
 	public ?string $detail;
 
+	#[ORM\Column(type: 'string')]
+	public ?string $clientIp;
+
 	#[ORM\Id]
 	#[ORM\GeneratedValue]
 	#[ORM\Column(type: 'integer')]

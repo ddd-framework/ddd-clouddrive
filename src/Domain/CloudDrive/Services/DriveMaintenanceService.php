@@ -45,6 +45,9 @@ class DriveMaintenanceService extends Service
 {
     public const int BATCH_SIZE = 500;
 
+    /** @var int Batches of BATCH_SIZE access events one maintenance run deletes at most, per table */
+    public const int MAX_ACCESS_EVENT_PURGE_BATCHES = 20;
+
     /** @var int Trashed nodes one empty-trash call purges at most */
     public const int MAX_NODES_PER_EMPTY_TRASH = 200;
 
@@ -63,10 +66,84 @@ class DriveMaintenanceService extends Service
                 ...$this->rescanFailedScans($isDryRun),
                 ...$this->reingestStaleVersions($isDryRun),
                 ...$this->sweepBlobs($isDryRun),
+                ...$this->purgeAccessEventsBeyondRetention($isDryRun),
             ];
         } finally {
             DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
         }
+    }
+
+    /**
+     * The retention of access events in days from `CloudDrive.settings.accessEventRetentionDays`; null = unlimited
+     * (0, null, a negative or non-numeric value).
+     */
+    public static function resolveAccessEventRetentionDays(mixed $configuredRetentionDays): ?int
+    {
+        if (!is_numeric($configuredRetentionDays) || (int)$configuredRetentionDays <= 0) {
+            return null;
+        }
+        return (int)$configuredRetentionDays;
+    }
+
+    /** The configured retention of access events in days; null = unlimited */
+    public function getAccessEventRetentionDays(): ?int
+    {
+        return static::resolveAccessEventRetentionDays(Config::get('CloudDrive.settings.accessEventRetentionDays'));
+    }
+
+    /**
+     * Deletes access events (VIEWED, DOWNLOADED, READ_BY_AGENT) older than `accessEventRetentionDays`, where each is
+     * stored: `READ_BY_AGENT` in the change table (with its context rows), the others in the activity table (skipped
+     * without it). Changes of other types are never deleted by age. Unlimited (the default 0): nothing is deleted.
+     * At most MAX_ACCESS_EVENT_PURGE_BATCHES × BATCH_SIZE rows per table and run; the next run continues.
+     *
+     * @return string[]
+     */
+    public function purgeAccessEventsBeyondRetention(bool $isDryRun): array
+    {
+        $retentionDays = $this->getAccessEventRetentionDays();
+        if ($retentionDays === null) {
+            return ['access events: kept without a time limit (accessEventRetentionDays not set), skipped'];
+        }
+        $createdBefore = DateTime::fromTimestamp(time() - $retentionDays * 86400);
+        $driveChangesService = $this->getDriveChangesService();
+        $driveActivityEventsService = $this->getDriveActivityEventsService();
+        if ($isDryRun) {
+            $changeTableCount = $driveChangesService->countAccessEventsCreatedBefore($createdBefore);
+            $activityTableCount = $driveActivityEventsService->countAccessEventsCreatedBefore($createdBefore);
+            if ($changeTableCount + $activityTableCount === 0) {
+                return [];
+            }
+            return [sprintf(
+                'would delete %d access event(s) older than %d days (%d in the change feed, %d in the activity table; at most %d per table and run)',
+                $changeTableCount + $activityTableCount, $retentionDays, $changeTableCount, $activityTableCount,
+                static::MAX_ACCESS_EVENT_PURGE_BATCHES * static::BATCH_SIZE
+            )];
+        }
+        $deletedChangeEventCount = 0;
+        $deletedActivityEventCount = 0;
+        for ($batchIndex = 0; $batchIndex < static::MAX_ACCESS_EVENT_PURGE_BATCHES; $batchIndex++) {
+            $driveChangeEventIds = $driveChangesService->findAccessEventIdsCreatedBefore($createdBefore, static::BATCH_SIZE);
+            if ($driveChangeEventIds === []) {
+                break;
+            }
+            $driveActivityEventsService->deleteContextsOfChangeEvents($driveChangeEventIds);
+            $deletedChangeEventCount += $driveChangesService->deleteAccessEventsByIds($driveChangeEventIds);
+        }
+        for ($batchIndex = 0; $batchIndex < static::MAX_ACCESS_EVENT_PURGE_BATCHES; $batchIndex++) {
+            $driveActivityEventIds = $driveActivityEventsService->findAccessEventIdsCreatedBefore($createdBefore, static::BATCH_SIZE);
+            if ($driveActivityEventIds === []) {
+                break;
+            }
+            $deletedActivityEventCount += $driveActivityEventsService->deleteAccessEventsByIds($driveActivityEventIds);
+        }
+        if ($deletedChangeEventCount + $deletedActivityEventCount === 0) {
+            return [];
+        }
+        return [sprintf(
+            'deleted %d access event(s) older than %d days (%d in the change feed, %d in the activity table)',
+            $deletedChangeEventCount + $deletedActivityEventCount, $retentionDays, $deletedChangeEventCount, $deletedActivityEventCount
+        )];
     }
 
     /**
@@ -543,5 +620,12 @@ class DriveMaintenanceService extends Service
         /** @var DriveChangesService $driveChangesService */
         $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
         return $driveChangesService;
+    }
+
+    protected function getDriveActivityEventsService(): DriveActivityEventsService
+    {
+        /** @var DriveActivityEventsService $driveActivityEventsService */
+        $driveActivityEventsService = DDDService::instance()->getService(DriveActivityEventsService::class);
+        return $driveActivityEventsService;
     }
 }

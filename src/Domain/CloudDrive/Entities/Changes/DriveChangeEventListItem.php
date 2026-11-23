@@ -50,6 +50,9 @@ class DriveChangeEventListItem extends ValueObject
     /** @var string|null A short detail of an application's event */
     public ?string $detail = null;
 
+    /** @var string|null The client's public IP of an access (VIEWED, DOWNLOADED); only in INTERNAL answers */
+    public ?string $clientIp = null;
+
     public ?string $path = null;
 
     public ?string $previousPath = null;
