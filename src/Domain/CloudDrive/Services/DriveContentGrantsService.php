@@ -189,6 +189,7 @@ class DriveContentGrantsService extends Service
             $driveFileCard->driveSpaceId = (int)$driveNode->driveSpaceId;
             $driveFileCard->name = (string)$driveNode->name;
             $driveFileCard->path = $this->getDriveNodesService()->buildPath($driveNode);
+            $driveFileCard->adminLink = $this->getDriveNodesService()->buildAdminLink($driveNode, $driveFileCard->path);
             $driveFileCard->isFolder = $driveNode->isFolder();
             $driveFileCard->sizeBytes = $driveNode->isFile() ? $driveNode->sizeBytes : null;
             $driveFileCard->contentType = $driveNode->contentType;

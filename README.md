@@ -69,7 +69,12 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    (manage right); `POST …/spaces/{id}/nodes/transfer/preview` and `…/nodes/transfer` (to another space);
    `driveNodeIds` on `…/children` and `…/search`; `approximateTotalCount` on unfiltered lists; `eventTypes` /
    `eventGroup` on `…/nodes/{id}/events`; `purpose=THUMBNAIL` on `…/nodes/{id}/content` (DOWNLOAD and INLINE are
-   recorded as accesses). A partner controller overrides `getDriveAudience()` (SHARED) and
+   recorded as accesses); `GET …/spaces/{id}/resolve?path=` for a path bar and deep links (a path in the space,
+   `drive/<id>`, `drivespaces/<mount>/…`, `/workspace/drive/…`; it may answer another space; 404 with
+   `missingSegment`, `path` and `deepestFolder`; a host with its own mount names overrides
+   `DriveSpacesService::findReadableSpaceByMountName()`). With `CloudDrive.settings.adminLinkTemplate` (placeholders
+   `{spaceId}`, `{nodeId}`, `{folderNodeId}`, `{path}`) file cards, the `DriveLocation` widget and resolved locations
+   carry `adminLink`, the host's deep link into its drive screen. A partner controller overrides `getDriveAudience()` (SHARED) and
    `throwForbiddenUnlessCloudDriveAccessAllowed()`. The space answers carry a quota block (the effective quota, and `usedBytes` split into
    `currentVersionBytes`, `olderVersionBytes`, `trashedBytes` and `pendingBytes`) and, for pickers, `displayName`,
    `groupLabel` and `displayGroup` (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()` /

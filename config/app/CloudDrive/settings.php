@@ -29,6 +29,10 @@ return [
     // 0 or null = kept as long as the space (the default; a host sets e.g. 365). Changes (created, moved, trashed …)
     // are never deleted by age.
     'accessEventRetentionDays' => 0,
+    // the host's deep link into its drive screen, on file cards, the drive location widget and resolved locations;
+    // placeholders {spaceId}, {nodeId}, {folderNodeId} (a file's folder), {path} (with a leading slash, URL-encoded),
+    // e.g. '/admin/drive?space={spaceId}&path={path}&file={nodeId}'; null = no links
+    'adminLinkTemplate' => null,
     // the maintenance redoes the ingest of a version whose blob waits longer than this (a lost worker run)
     'staleIngestMinutes' => 15,
     // the malware scanner of the ingest, by name (DriveMalwareScanner::getScannerName(), or its class): 'clamscan'

@@ -40,6 +40,8 @@ use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFileVersionsGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFolderCreateRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFoldersGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveFoldersGetResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveLocationResolveRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveLocationResolveResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeEventsGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeGetResponseDto;
@@ -68,7 +70,7 @@ use DDD\Presentation\Base\Router\Routes\Post;
 /**
  * The drive screen's backend: spaces, folders, files, uploads (reserve, parts, complete), content URLs, file cards,
  * move, tags, trash and restore, name search, filtered lists, the folder tree, the trash list, versions and their
- * restore, a node's history, bulk move / trash / restore, purge and emptying the trash. A host mounts it with one controller that sets the path prefix, the tag
+ * restore, resolving a pasted location (path bar, deep link), a node's history, bulk move / trash / restore, purge and emptying the trash. A host mounts it with one controller that sets the path prefix, the tag
  * and the access (`#[Route('/common/cloudDrive')] class AdminCloudDriveController extends AdminController { use
  * CloudDriveControllerTrait; }`). Every read and write runs under the host's space rights; the access hook
  * {@see throwForbiddenUnlessCloudDriveAccessAllowed()} runs first in every action. A second controller with its own
@@ -516,6 +518,39 @@ trait CloudDriveControllerTrait
             $keptFolderNodes->add($folderNode);
         }
         $responseDto->items = $driveNodesService->buildListItems($keptFolderNodes, $driveSpace);
+        return $responseDto;
+    }
+
+    /**
+     * Where a pasted location points (a path bar, a deep link, a path the agent wrote): a path in this space,
+     * `drive/<id>`, `drivespaces/<mount>/…` or `/workspace/drive/…`. A mount path or a reference may answer another
+     * space the caller can read. Not found: 404 with `missingSegment`, `path` and the deepest existing folder
+     * (`deepestFolder`).
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     */
+    #[Get('/spaces/{driveSpaceId}/resolve')]
+    #[Summary('DriveLocation Resolve')]
+    public function resolveDriveLocation(
+        DriveLocationResolveRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveNodesService $driveNodesService
+    ): DriveLocationResolveResponseDto {
+        $this->prepareCloudDriveAction();
+        $requestedDriveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
+        $driveLocationResolution = $driveNodesService->resolveLocation($requestedDriveSpace, $requestDto->path);
+        $driveSpace = $driveLocationResolution->driveSpace ?? $requestedDriveSpace;
+        $driveNode = $driveLocationResolution->driveNode;
+        $responseDto = new DriveLocationResolveResponseDto();
+        $responseDto->driveSpaceId = (int)$driveSpace->id;
+        $responseDto->path = $driveLocationResolution->path;
+        if ($driveNode !== null) {
+            $responseDto->item = $driveNodesService->buildListItemOfNode($driveNode, $driveSpace);
+            $responseDto->ancestors = $driveNodesService->buildListItems($driveNodesService->findAncestors($driveNode), $driveSpace);
+            $responseDto->adminLink = $driveNodesService->buildAdminLink($driveNode, $driveLocationResolution->path);
+        }
         return $responseDto;
     }
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-rc.14
+
+- Added (locations): `GET …/spaces/{driveSpaceId}/resolve?path=` resolves a pasted location under the caller's
+  rights: a path in the space (`/Templates/Typst/letter.typ`, without or with a leading slash), a reference
+  `drive/<id>` (any readable space; a trashed node only for INTERNAL), a mount path `drivespaces/<mount>/…` and an
+  agent sandbox path `/workspace/drive/<mount>/…` or `/workspace/drive/<folder>/…` (the requested space when the name
+  is no mount). Answer `{driveSpaceId, item, ancestors, path, adminLink}`; `driveSpaceId` differs from the requested
+  one for a mount path or a reference. Not found: 404 with `missingSegment`, `path`, `driveSpaceId` and
+  `deepestFolder` (`DriveLocationNotFoundException`). `..` answers 400. Service: `DriveNodesService::resolveLocation()`
+  (`DriveLocationReference`, `DriveLocationResolution`); mount names → spaces through the hook
+  `DriveSpacesService::findReadableSpaceByMountName()` (default `library` / `space-<id>` = `DriveSpace::buildMountName()`).
+- Added (deep links): `CloudDrive.settings.adminLinkTemplate` (default null) with `{spaceId}`, `{nodeId}`,
+  `{folderNodeId}` (a file's folder) and `{path}` (leading slash, URL-encoded). When set, `DriveFileCard::$adminLink`
+  (`POST …/cards`), `DriveLocationConversationWidget::$adminLink` (`showDriveLocation`) and the resolve answer carry the
+  link; `DriveNodesService::buildAdminLink()` / `fillAdminLinkTemplate()` build it.
+
 ## 0.1.0-rc.13
 
 - Added (retention): `CloudDrive.settings.accessEventRetentionDays` (default 0 = unlimited). Above 0, `app:drive:maintain`

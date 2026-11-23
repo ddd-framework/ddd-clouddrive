@@ -11,6 +11,8 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveFileFamily;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveLocationReference;
+use DDD\Domain\CloudDrive\Entities\Nodes\DriveLocationResolution;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeBulkResult;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeCounts;
@@ -19,6 +21,7 @@ use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListItems;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeListQuery;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Exceptions\DriveLocationNotFoundException;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNodes;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
@@ -909,6 +912,132 @@ class DriveNodesService extends EntitiesService
             ->setParameter('delta', $delta)
             ->setParameter('folderNodeId', $folderNodeId)
             ->getQuery()->execute();
+    }
+
+    /**
+     * The file or folder a pasted location names, under the caller's rights ({@see DriveLocationReference}): a path in
+     * `$requestedDriveSpace`, `drive/<nodeId>` or a mount path of another space (the answer then carries that space).
+     * A trashed node is resolved by reference for the INTERNAL audience only; a path never reaches the trash.
+     *
+     * @throws DriveLocationNotFoundException the walk stopped: the missing segment and the deepest existing folder
+     * @throws BadRequestException a path that leaves its folder (`..`) or is nested too deep
+     */
+    public function resolveLocation(DriveSpace $requestedDriveSpace, string $location): DriveLocationResolution
+    {
+        $driveLocationReference = DriveLocationReference::fromLocation($location);
+        $driveSpacesService = $this->getDriveSpacesService();
+        if ($driveLocationReference->isNodeReference()) {
+            return $this->resolveNodeReference($driveLocationReference);
+        }
+        $driveSpace = $requestedDriveSpace;
+        $path = $driveLocationReference->path;
+        if ($driveLocationReference->mountName !== null) {
+            $mountedDriveSpace = $driveSpacesService->findReadableSpaceByMountName($driveLocationReference->mountName);
+            if ($mountedDriveSpace !== null) {
+                $driveSpace = $mountedDriveSpace;
+            } elseif ($driveLocationReference->pathWhenMountIsUnknown !== null) {
+                $path = $driveLocationReference->pathWhenMountIsUnknown;
+            } else {
+                throw DriveLocationNotFoundException::forMissingSegment(null, $path, $driveLocationReference->mountName, null);
+            }
+        }
+        $currentNode = $this->findRootNode($driveSpace);
+        if ($currentNode === null) {
+            throw DriveLocationNotFoundException::forMissingSegment((int)$driveSpace->id, $path, '/', null);
+        }
+        foreach (static::splitPath($path) as $pathSegment) {
+            $childNode = $currentNode->isFolder() ? $this->findChildByName($currentNode, $pathSegment) : null;
+            if ($childNode === null) {
+                $deepestFolderNode = $currentNode->isFolder() ? $currentNode : null;
+                throw DriveLocationNotFoundException::forMissingSegment(
+                    (int)$driveSpace->id,
+                    $path,
+                    $pathSegment,
+                    $deepestFolderNode !== null ? $this->buildListItemOfNode($deepestFolderNode, $driveSpace) : null
+                );
+            }
+            $currentNode = $childNode;
+        }
+        $driveLocationResolution = new DriveLocationResolution();
+        $driveLocationResolution->driveSpace = $driveSpace;
+        $driveLocationResolution->driveNode = $currentNode;
+        $driveLocationResolution->path = $this->buildPath($currentNode);
+        return $driveLocationResolution;
+    }
+
+    /**
+     * The node of a reference `drive/<nodeId>` in any space the caller may read.
+     *
+     * @throws DriveLocationNotFoundException
+     */
+    protected function resolveNodeReference(DriveLocationReference $driveLocationReference): DriveLocationResolution
+    {
+        $reference = 'drive/' . $driveLocationReference->driveNodeId;
+        $driveNode = $this->find((int)$driveLocationReference->driveNodeId, false);
+        $driveSpace = $driveNode instanceof DriveNode
+            ? $this->getDriveSpacesService()->findSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ)
+            : null;
+        $isHiddenFromAudience = $driveNode instanceof DriveNode && $driveNode->isTrashed()
+            && $this->getDriveSpacesService()->getCurrentAudience() !== DriveSpace::AUDIENCE_INTERNAL;
+        if (!$driveNode instanceof DriveNode || $driveSpace === null || $isHiddenFromAudience) {
+            throw DriveLocationNotFoundException::forMissingSegment(null, null, $reference, null);
+        }
+        $driveLocationResolution = new DriveLocationResolution();
+        $driveLocationResolution->driveSpace = $driveSpace;
+        $driveLocationResolution->driveNode = $driveNode;
+        $driveLocationResolution->path = $this->buildPath($driveNode);
+        return $driveLocationResolution;
+    }
+
+    /** One node as a file manager draws it */
+    public function buildListItemOfNode(DriveNode $driveNode, DriveSpace $driveSpace): ?DriveNodeListItem
+    {
+        $driveNodes = new DriveNodes();
+        $driveNodes->add($driveNode);
+        return $this->buildListItems($driveNodes, $driveSpace)->first();
+    }
+
+    /**
+     * The host's deep link into its drive screen for a file or folder (`CloudDrive.settings.adminLinkTemplate`); null
+     * when no template is set. A file links to its folder with the file opened.
+     *
+     * @param string|null $path the node's path when the caller has it already
+     */
+    public function buildAdminLink(DriveNode $driveNode, ?string $path = null): ?string
+    {
+        $adminLinkTemplate = $this->getAdminLinkTemplate();
+        if ($adminLinkTemplate === null) {
+            return null;
+        }
+        $folderNodeId = $driveNode->isFolder() ? (int)$driveNode->id : ($driveNode->parentNodeId !== null ? (int)$driveNode->parentNodeId : null);
+        return static::fillAdminLinkTemplate(
+            $adminLinkTemplate,
+            (int)$driveNode->driveSpaceId,
+            (int)$driveNode->id,
+            $folderNodeId,
+            $path ?? $this->buildPath($driveNode)
+        );
+    }
+
+    /** `CloudDrive.settings.adminLinkTemplate`, null when unset or empty */
+    public function getAdminLinkTemplate(): ?string
+    {
+        $adminLinkTemplate = Config::get('CloudDrive.settings.adminLinkTemplate');
+        return is_string($adminLinkTemplate) && trim($adminLinkTemplate) !== '' ? trim($adminLinkTemplate) : null;
+    }
+
+    /**
+     * Fills a link template: `{spaceId}`, `{nodeId}`, `{folderNodeId}` (empty when unknown) and `{path}` (the path with
+     * a leading slash, URL-encoded as one value).
+     */
+    public static function fillAdminLinkTemplate(string $adminLinkTemplate, int $driveSpaceId, ?int $driveNodeId, ?int $folderNodeId, string $path): string
+    {
+        return strtr($adminLinkTemplate, [
+            '{spaceId}' => (string)$driveSpaceId,
+            '{nodeId}' => $driveNodeId !== null ? (string)$driveNodeId : '',
+            '{folderNodeId}' => $folderNodeId !== null ? (string)$folderNodeId : '',
+            '{path}' => rawurlencode('/' . ltrim($path, '/')),
+        ]);
     }
 
     /**

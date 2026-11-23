@@ -356,6 +356,8 @@ class CloudDriveMCPPackage extends MCPPackage
         $driveLocationWidget->driveSpaceId = (int)$driveNode->driveSpaceId;
         $driveLocationWidget->driveNodeId = $driveNode->isRoot() ? null : (int)$driveNode->id;
         $driveLocationWidget->path = $driveNodesService->buildPath($driveNode);
+        // the link opens the folder; a search keeps the host's own route with `query`
+        $driveLocationWidget->adminLink = $driveNodesService->buildAdminLink($driveNode, $driveLocationWidget->path);
         $driveLocationWidget->query = $requestDto->query !== null && trim($requestDto->query) !== '' ? mb_substr(trim($requestDto->query), 0, 200) : null;
         $driveLocationWidget->title = $requestDto->title !== null && trim($requestDto->title) !== '' ? mb_substr(trim($requestDto->title), 0, 160) : null;
         $driveLocationWidget->widgetSelfHydrationKey = $callProvenance->agentSpace?->getWidgetSelfHydrationKey();

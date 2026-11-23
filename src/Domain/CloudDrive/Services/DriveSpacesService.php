@@ -192,6 +192,29 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         return $this->isRightAllowedForAudience($driveSpace, $right, $this->currentAudience) ? $driveSpace : null;
     }
 
+    /**
+     * The space the caller may read whose agent mount folder is `$mountName` (`library`, `space-12`; the folder below
+     * `drivespaces/` of a sandbox). A host whose mount resolver names mounts differently (DriveSpaceMountResolverService)
+     * overrides this at the same path, so a pasted sandbox path finds its space.
+     */
+    public function findReadableSpaceByMountName(string $mountName): ?DriveSpace
+    {
+        if (preg_match('/^space-(\d+)$/', $mountName, $mountNameMatches) === 1) {
+            $driveSpace = $this->findSpaceWithRight((int)$mountNameMatches[1], DBDriveSpace::RIGHT_READ);
+            return $driveSpace !== null && $driveSpace->buildMountName() === $mountName ? $driveSpace : null;
+        }
+        $readableDriveSpaces = $this->findAll(null, 500, false);
+        if (!$readableDriveSpaces instanceof DriveSpaces) {
+            return null;
+        }
+        foreach ($readableDriveSpaces->getElements() as $readableDriveSpace) {
+            if ($readableDriveSpace->buildMountName() === $mountName) {
+                return $readableDriveSpace;
+            }
+        }
+        return null;
+    }
+
     /** The throwaway space of an eval case's workspace key, null when there is none */
     public function findSpaceByScratchKey(string $scratchKey): ?DriveSpace
     {

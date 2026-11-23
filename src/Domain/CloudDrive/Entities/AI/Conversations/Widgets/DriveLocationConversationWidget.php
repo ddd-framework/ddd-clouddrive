@@ -7,9 +7,9 @@ namespace DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets;
 use DDD\Domain\AI\Entities\Conversations\Widgets\ConversationWidget;
 
 /**
- * A deep link into the drive screen: a space, a folder of it or a search. The renderer opens the host's drive
- * route (`CloudDrive.links`) with these fields; it reads the space under the viewer's rights. Written by
- * `showDriveLocation`.
+ * A deep link into the drive screen: a space, a folder of it or a search. The renderer opens `adminLink` when the host
+ * set `CloudDrive.settings.adminLinkTemplate`, else its own drive route with these fields; it reads the space under
+ * the viewer's rights. Written by `showDriveLocation`.
  */
 class DriveLocationConversationWidget extends ConversationWidget
 {
@@ -38,6 +38,9 @@ class DriveLocationConversationWidget extends ConversationWidget
     /** @var string|null The link text (at most 160 characters) */
     public ?string $title = null;
 
+    /** @var string|null The host's deep link to the folder (`CloudDrive.settings.adminLinkTemplate`); null without a template */
+    public ?string $adminLink = null;
+
     protected function getWidgetFields(): array
     {
         return static::withoutNullWidgetFields([
@@ -46,6 +49,7 @@ class DriveLocationConversationWidget extends ConversationWidget
             'path' => $this->path,
             'query' => $this->query,
             'title' => $this->title,
+            'adminLink' => $this->adminLink,
         ]);
     }
 }

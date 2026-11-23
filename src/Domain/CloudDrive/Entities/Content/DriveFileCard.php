@@ -45,6 +45,9 @@ class DriveFileCard extends ValueObject
 
     public ?DateTime $urlsExpireAt = null;
 
+    /** @var string|null The host's deep link into its drive screen (`CloudDrive.settings.adminLinkTemplate`); null without a template */
+    public ?string $adminLink = null;
+
     public function uniqueKey(): string
     {
         return self::uniqueKeyStatic($this->reference);
