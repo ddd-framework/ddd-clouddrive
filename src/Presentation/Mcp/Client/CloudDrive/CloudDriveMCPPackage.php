@@ -86,7 +86,7 @@ class CloudDriveMCPPackage extends MCPPackage
             return DriveMcpResponseDto::withLines($statusLines, 'No working copy of the own drive in this conversation.');
         }
         $changeLines = [];
-        foreach ($driveWorkingCopiesService->findEntries($driveWorkingCopy)->getElements() as $driveWorkingCopyEntry) {
+        foreach ($driveWorkingCopiesService->findCurrentEntries($driveWorkingCopy)->getElements() as $driveWorkingCopyEntry) {
             if (!$requestDto->all && str_starts_with((string)$driveWorkingCopyEntry->path, 'work/')) {
                 continue;
             }

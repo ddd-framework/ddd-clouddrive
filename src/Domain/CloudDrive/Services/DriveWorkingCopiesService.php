@@ -228,6 +228,7 @@ class DriveWorkingCopiesService extends EntitiesService
         string $origin = DriveNode::ORIGIN_AGENT
     ): DriveCommitResult {
         $driveSpace = $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveWorkingCopy->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $this->getDriveWorkingCopyListenersService()->notifyBeforeWorkingCopyRead($driveWorkingCopy);
         $driveCommitResult = new DriveCommitResult();
         $driveCommitResult->committedFiles = new DriveWorkingCopyFiles();
         $driveCommitResult->conflictedFiles = new DriveWorkingCopyFiles();
@@ -246,6 +247,7 @@ class DriveWorkingCopiesService extends EntitiesService
                 $driveCommitResult->refusedLines[] = $driveWorkingCopyEntry->path . ': ' . $refusal->getMessage();
             }
         }
+        $this->getDriveWorkingCopyListenersService()->notifyAfterWorkingCopyCommitted($driveWorkingCopy, $driveCommitResult, $driveCommitResolutions);
         return $driveCommitResult;
     }
 
@@ -315,7 +317,17 @@ class DriveWorkingCopiesService extends EntitiesService
         $driveWorkingCopy->updatePartialIgnoringRights('changeCursor');
     }
 
-    /** The saved entries of a working copy, by path */
+    /**
+     * The saved entries after the host flushed its live sandbox ({@see DriveWorkingCopyListener::beforeWorkingCopyRead()}):
+     * what a status shows.
+     */
+    public function findCurrentEntries(DriveWorkingCopy $driveWorkingCopy): DriveWorkingCopyEntries
+    {
+        $this->getDriveWorkingCopyListenersService()->notifyBeforeWorkingCopyRead($driveWorkingCopy);
+        return $this->findEntries($driveWorkingCopy);
+    }
+
+    /** The saved entries of a working copy, by path (as saved; {@see findCurrentEntries()} flushes the sandbox first) */
     public function findEntries(DriveWorkingCopy $driveWorkingCopy): DriveWorkingCopyEntries
     {
         $repoClass = new DBDriveWorkingCopyEntries();
@@ -593,6 +605,13 @@ class DriveWorkingCopiesService extends EntitiesService
         /** @var DriveVersionsService $driveVersionsService */
         $driveVersionsService = DDDService::instance()->getService(DriveVersionsService::class);
         return $driveVersionsService;
+    }
+
+    protected function getDriveWorkingCopyListenersService(): DriveWorkingCopyListenersService
+    {
+        /** @var DriveWorkingCopyListenersService $driveWorkingCopyListenersService */
+        $driveWorkingCopyListenersService = DDDService::instance()->getService(DriveWorkingCopyListenersService::class);
+        return $driveWorkingCopyListenersService;
     }
 
     protected function getDriveChangesService(): DriveChangesService

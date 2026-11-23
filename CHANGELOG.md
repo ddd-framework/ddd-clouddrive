@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-rc.6
+
+- Added: `DriveWorkingCopyListener` (tag `clouddrive.working_copy_listener`) for a host with a live sandbox:
+  `beforeWorkingCopyRead()` before a status, a commit, the commit before a copy and before a card of an own-drive file
+  (flush the sandbox's unsaved changes with `stageChanges()`), `afterWorkingCopyCommitted(wc, result, resolutions)`
+  after every commit (move the sandbox's base, apply theirs / both). A listener that throws is logged and skipped
+  (`DriveWorkingCopyListenersService`). `DriveWorkingCopiesService::findCurrentEntries()` flushes, then reads.
+- Changed: `showDriveFiles` (the store's `findDriveFiles()`) commits a saved change of an own-drive file first, so the
+  card shows what the sandbox holds.
+
 ## 0.1.0-rc.5
 
 - Added: eval isolation as standard (with mgamadeus/ddd-agents ≥ 0.1.29): every eval case gets a throwaway own drive

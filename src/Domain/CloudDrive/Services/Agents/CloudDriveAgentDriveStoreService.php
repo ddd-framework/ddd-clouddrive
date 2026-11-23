@@ -115,7 +115,10 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         foreach ($agentDrivePaths as $agentDrivePath) {
             try {
                 $agentDriveMount = $this->requireMount($agentDrivePath);
-                $driveNode = $this->findNodeOfPath($this->requireSpaceOfMount($agentDriveMount), $agentDrivePath);
+                $driveSpace = $this->requireSpaceOfMount($agentDriveMount);
+                // a file of the own drive the sandbox just wrote or changed is committed first, so a card shows it
+                $this->commitUncommittedSource($callProvenance, $agentDriveMount, $driveSpace, $agentDrivePath);
+                $driveNode = $this->findNodeOfPath($driveSpace, $agentDrivePath);
             } catch (NotFoundException|BadRequestException) {
                 continue;
             }
@@ -268,7 +271,12 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         try {
             $driveWorkingCopiesService = $this->getDriveWorkingCopiesService();
             $driveWorkingCopy = $this->findOwnWorkingCopyOfCall($callProvenance, $sourceSpace);
-            if ($driveWorkingCopy === null || $driveWorkingCopiesService->findEntryByPath($driveWorkingCopy, $sourcePath->pathInMount) === null) {
+            if ($driveWorkingCopy === null) {
+                return null;
+            }
+            // the host flushes its live sandbox first: a change not yet saved becomes an entry
+            $driveWorkingCopiesService->findCurrentEntries($driveWorkingCopy);
+            if ($driveWorkingCopiesService->findEntryByPath($driveWorkingCopy, $sourcePath->pathInMount) === null) {
                 return null;
             }
             $driveCommitResult = $driveWorkingCopiesService->commitChanges($driveWorkingCopy, 'committed before a copy', [$sourcePath->pathInMount]);
