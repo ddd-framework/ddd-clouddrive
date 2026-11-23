@@ -4,6 +4,13 @@ Module of mgamadeus/ddd: drive spaces, versioned files in object storage, workin
 Overview and install: `README.md`; changes per version: `CHANGELOG.md`. Core conventions (no `private` / `final`,
 skills first, no struct-shaped arrays on public surface) apply: Core `AGENTS.md`.
 
+## Frontend (`web/`)
+
+The npm package `@mgamadeus/ddd-clouddrive` (`.` client and types, `./screen` drive screen, `./agents` DriveFiles cards
+source) is versioned in lockstep with `composer.json`: a release bumps both, one `v*` tag publishes Composer (Packagist)
+and npm (`.github/workflows/release.yml`, trusted publishing). A route or payload change of `CloudDriveControllerTrait`
+updates `web/src/types.ts` and `web/src/api.ts` in the same commit. Checks: `pnpm typecheck && pnpm test && pnpm build`.
+
 ## Space rights
 
 Rights live in `DBDriveSpace::applyRightsToSpaceQuery()`, extended only by `DriveSpaceRightsExtension` services

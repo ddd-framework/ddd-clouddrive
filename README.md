@@ -131,6 +131,12 @@ Untrusted input: every file in a drive is foreign. The module never decodes, con
 Evals (ddd-agents ≥ 0.1.29): every case gets a throwaway own drive seeded from its `scratchFiles`; further mounts are
 read-only during the case; the space is erased at the end (`--keepWorkspace` keeps it).
 
+## Frontend
+
+The npm package `@mgamadeus/ddd-clouddrive` lives in `web/` and is released with the same tag and version: the RTK Query
+client (`.`), the drive screen (`./screen`, on the file manager of `@mgamadeus/ddd-admin-ui`) and the source of the
+`DriveFiles` cards of `@mgamadeus/ddd-agents` (`./agents`). See [web/README.md](web/README.md).
+
 ## License
 
 MIT

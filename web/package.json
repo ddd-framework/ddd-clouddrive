@@ -1,0 +1,87 @@
+{
+  "name": "@mgamadeus/ddd-clouddrive",
+  "version": "0.1.0-rc.21",
+  "description": "React frontend of the cloud drive for backends built with mgamadeus/ddd (Composer package mgamadeus/ddd-clouddrive): the RTK Query client of the drive routes, the drive screen on the file manager of @mgamadeus/ddd-admin-ui (spaces, folders, upload, versions, trash, activity, URL state) and the source of the DriveFiles cards of @mgamadeus/ddd-agents.",
+  "keywords": [
+    "ddd",
+    "mgamadeus",
+    "cloud-drive",
+    "file-manager",
+    "react",
+    "rtk-query"
+  ],
+  "homepage": "https://github.com/ddd-framework/ddd-clouddrive/tree/main/web#readme",
+  "bugs": {
+    "url": "https://github.com/ddd-framework/ddd-clouddrive/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ddd-framework/ddd-clouddrive.git",
+    "directory": "web"
+  },
+  "license": "MIT",
+  "author": "Marius-Eugen Gerdan <marius@gerdan.net>",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./screen": {
+      "types": "./dist/screen/index.d.ts",
+      "import": "./dist/screen/index.js"
+    },
+    "./agents": {
+      "types": "./dist/agents/index.d.ts",
+      "import": "./dist/agents/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsup && node scripts/check-package.mjs .",
+    "typecheck": "tsc -p .",
+    "test": "node --experimental-strip-types --no-warnings --test \"src/**/*.test.ts\"",
+    "prepack": "pnpm build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@mgamadeus/ddd-admin-ui": ">=0.5.5 <1",
+    "@mgamadeus/ddd-agents": ">=0.1.38 <1",
+    "lucide-react": ">=0.550.0 <2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@mgamadeus/ddd-agents": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mgamadeus/ddd-admin-ui": "^0.5.5",
+    "@mgamadeus/ddd-agents": "^0.1.38",
+    "@mgamadeus/ddd-web": "^0.13.0",
+    "@reduxjs/toolkit": "^2.13.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "lucide-react": "^1.66.0",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-redux": "^9.3.1",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3"
+  }
+}

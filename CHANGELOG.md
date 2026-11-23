@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-rc.21
+
+- New npm package `@mgamadeus/ddd-clouddrive` from `web/` of this repository, released with the same tag and version
+  as the Composer package (`.github/workflows/release.yml`, trusted publishing):
+  - `.`: `createCloudDriveApi` (the drive routes on the host's RTK Query api) and the payload types;
+  - `./screen`: the drive screen (`CloudDriveScreen`, `CloudDriveSpacePicker`, `useCloudDriveFileAdapter`, file
+    actions, mapping), moved unchanged from `@mgamadeus/ddd-admin-ui/clouddrive` (which drops the entry);
+  - `./agents`: `createCloudDriveCardsSource()` — the `DriveFileCardsSource` of `@mgamadeus/ddd-agents` ≥ 0.1.38 on
+    `POST …/cards` and the content route — and `buildDriveScreenHref()`.
+- Migration of a host: imports from `@mgamadeus/ddd-admin-ui/clouddrive` move to `@mgamadeus/ddd-clouddrive`
+  (client, types) and `@mgamadeus/ddd-clouddrive/screen` (screen, adapter, helpers); an own `DriveFiles` widget and
+  its cards source give way to `@mgamadeus/ddd-agents`' widget with `createCloudDriveCardsSource()`.
+
 ## 0.1.0-rc.20
 
 - Added (actors): `DriveChangesService::findActingAccountIdOfCurrentCaller()` beside
