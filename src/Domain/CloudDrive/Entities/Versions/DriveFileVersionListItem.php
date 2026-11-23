@@ -54,7 +54,14 @@ class DriveFileVersionListItem extends ValueObject
 
     public ?int $authorAccountId = null;
 
+    /** @var string|null The author as the current audience sees them ({@see \DDD\Domain\CloudDrive\Services\DriveActorNamesService::buildActorDisplayName()}) */
     public ?string $authorName = null;
+
+    /** @var int|null The account the author wrote the version for (a staff member signed in as another account); null otherwise */
+    public ?int $onBehalfOfAccountId = null;
+
+    /** @var string|null That account's display name */
+    public ?string $onBehalfOfName = null;
 
     public ?DateTime $createdAt = null;
 

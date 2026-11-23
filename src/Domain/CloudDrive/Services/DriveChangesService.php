@@ -49,7 +49,8 @@ class DriveChangesService extends EntitiesService
         ?string $path = null,
         ?string $previousPath = null,
         ?string $workingCopyKey = null,
-        ?int $onBehalfOfAccountId = null
+        ?int $onBehalfOfAccountId = null,
+        ?int $actorAccountId = null
     ): DriveChangeEvent {
         $driveChangeEvent = DriveChangeEvent::newInstance();
         $driveChangeEvent->driveSpaceId = (int)$driveNode->driveSpaceId;
@@ -58,8 +59,7 @@ class DriveChangesService extends EntitiesService
         $driveChangeEvent->driveFileVersionId = $driveFileVersionId;
         $driveChangeEvent->path = $path !== null ? mb_substr($path, 0, 2000) : null;
         $driveChangeEvent->previousPath = $previousPath !== null ? mb_substr($previousPath, 0, 2000) : null;
-        $authAccount = AuthService::instance()->getAccount();
-        $driveChangeEvent->actorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        $driveChangeEvent->actorAccountId = $actorAccountId ?? $this->findActingAccountIdOfCurrentCaller();
         $driveChangeEvent->workingCopyKey = $workingCopyKey;
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
@@ -74,6 +74,18 @@ class DriveChangesService extends EntitiesService
             $this->getDriveSpacesService()->getCurrentAudience()
         );
         return $driveChangeEvent;
+    }
+
+    /**
+     * The account that acts right now: the author of a new version, the creator of a node, the actor of a change and of
+     * an access. Default: the signed-in account. An application whose staff can act as another account (impersonation)
+     * overrides it (same-path subclass) to answer the real staff account, and answers the impersonated account in
+     * {@see findOnBehalfOfAccountIdOfCurrentCaller()}. Every write path of the drive asks these two.
+     */
+    public function findActingAccountIdOfCurrentCaller(): ?int
+    {
+        $authAccount = AuthService::instance()->getAccount();
+        return $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
     }
 
     /**
@@ -96,10 +108,7 @@ class DriveChangesService extends EntitiesService
      */
     public function recordHostEvent(DriveNode $driveNode, string $eventType, ?string $detail = null, ?int $actorAccountId = null, ?int $onBehalfOfAccountId = null): ?DriveActivityEvent
     {
-        if ($actorAccountId === null) {
-            $authAccount = AuthService::instance()->getAccount();
-            $actorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
-        }
+        $actorAccountId ??= $this->findActingAccountIdOfCurrentCaller();
         return $this->getDriveActivityEventsService()->recordHostEvent($driveNode, $eventType, $detail, $actorAccountId, $onBehalfOfAccountId ?? $this->findOnBehalfOfAccountIdOfCurrentCaller(), $this->getDriveSpacesService()->getCurrentAudience());
     }
 
@@ -156,6 +165,45 @@ class DriveChangesService extends EntitiesService
         }
         $driveChangeEvents = $repoClass->find($queryBuilder, false);
         return $driveChangeEvents instanceof DriveChangeEvents ? $driveChangeEvents : new DriveChangeEvents();
+    }
+
+    /**
+     * For whom each node was created (the on-behalf account of its CREATED / COPIED_IN change), keyed by node id; nodes
+     * created by an account acting for itself, before the context was kept, or without the activity table are missing.
+     * Two batched reads (the creation changes of the nodes, then their context).
+     *
+     * @param int[] $driveNodeIds
+     * @return int[] node id => on-behalf account id
+     */
+    public function findCreationOnBehalfOfAccountIds(array $driveNodeIds): array
+    {
+        $driveNodeIds = array_values(array_unique(array_filter(array_map('intval', $driveNodeIds))));
+        if ($driveNodeIds === [] || !$this->getDriveActivityEventsService()->isActivityTableAvailable()) {
+            return [];
+        }
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveNodeId IN (:driveNodeIds)")
+            ->andWhere("{$alias}.eventType IN (:creationEventTypes)")
+            ->setParameter('driveNodeIds', $driveNodeIds)
+            ->setParameter('creationEventTypes', [DriveChangeEvent::EVENT_CREATED, DriveChangeEvent::EVENT_COPIED_IN]);
+        $driveChangeEvents = $repoClass->find($queryBuilder, false);
+        if (!$driveChangeEvents instanceof DriveChangeEvents) {
+            return [];
+        }
+        $driveNodeIdsByChangeEventId = [];
+        foreach ($driveChangeEvents->getElements() as $driveChangeEvent) {
+            $driveNodeIdsByChangeEventId[(int)$driveChangeEvent->id] = (int)$driveChangeEvent->driveNodeId;
+        }
+        $onBehalfOfAccountIdsByNodeId = [];
+        foreach ($this->getDriveActivityEventsService()->findContextsOfChangeEvents(array_keys($driveNodeIdsByChangeEventId))->getElements() as $changeContext) {
+            $driveNodeId = $driveNodeIdsByChangeEventId[(int)$changeContext->driveChangeEventId] ?? null;
+            if ($driveNodeId !== null && $changeContext->onBehalfOfAccountId !== null) {
+                $onBehalfOfAccountIdsByNodeId[$driveNodeId] = (int)$changeContext->onBehalfOfAccountId;
+            }
+        }
+        return $onBehalfOfAccountIdsByNodeId;
     }
 
     /**

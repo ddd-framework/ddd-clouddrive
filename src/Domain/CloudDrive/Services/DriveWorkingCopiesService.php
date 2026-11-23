@@ -34,7 +34,6 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
-use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use Throwable;
 
@@ -474,6 +473,7 @@ class DriveWorkingCopiesService extends EntitiesService
         $driveFileWrite->expectedLatestVersionId = $baseNode !== null ? $driveWorkingCopyEntry->baseVersionId : null;
         $driveFileWrite->ignoresExpectedVersion = $ignoresExpectedVersion;
         $driveFileWrite->authorAccountId = $this->findActingAccountId();
+        $driveFileWrite->onBehalfOfAccountId = $this->findOnBehalfOfAccountId();
         $driveFileWrite->conversationKey = $driveWorkingCopyEntry->conversationKey;
         $driveFileWrite->workingCopyKey = $driveWorkingCopy->workingCopyKey;
         $driveFileWriteResult = $baseNode !== null
@@ -597,10 +597,20 @@ class DriveWorkingCopiesService extends EntitiesService
             ->getQuery()->execute();
     }
 
+    /** The acting account ({@see DriveChangesService::findActingAccountIdOfCurrentCaller()}, the one hook a host overrides) */
     protected function findActingAccountId(): ?int
     {
-        $authAccount = AuthService::instance()->getAccount();
-        return $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        return $driveChangesService->findActingAccountIdOfCurrentCaller();
+    }
+
+    /** The account the acting account acts for ({@see DriveChangesService::findOnBehalfOfAccountIdOfCurrentCaller()}) */
+    protected function findOnBehalfOfAccountId(): ?int
+    {
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        return $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
     }
 
     protected function getDriveSpacesService(): DriveSpacesService

@@ -81,6 +81,12 @@ class DriveNodeListItem extends ValueObject
     /** @var string|null The creator's display name (the application's names; null when it gives none) */
     public ?string $createdByName = null;
 
+    /** @var int|null The account the creator acted for (a staff member signed in as another account); null otherwise */
+    public ?int $createdOnBehalfOfAccountId = null;
+
+    /** @var string|null That account's display name */
+    public ?string $createdOnBehalfOfName = null;
+
     public ?DateTime $createdAt = null;
 
     public ?DateTime $updatedAt = null;

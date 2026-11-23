@@ -23,7 +23,6 @@ use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
-use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
 use Symfony\Component\DependencyInjection\Attribute\AutowireIterator;
@@ -267,8 +266,10 @@ class DriveSpaceTransfersService extends Service
             $driveFileWrite->origin = DriveNode::ORIGIN_COPY;
             $driveFileWrite->isContentUntrusted = (bool)$driveNode->isContentUntrusted;
             $driveFileWrite->ignoresExpectedVersion = true;
-            $authAccount = AuthService::instance()->getAccount();
-            $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+            /** @var DriveChangesService $driveChangesService */
+            $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+            $driveFileWrite->authorAccountId = $driveChangesService->findActingAccountIdOfCurrentCaller();
+            $driveFileWrite->onBehalfOfAccountId = $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
             $driveFileWrite->copiedFromNodeId = (int)$driveNode->id;
             $driveFileWrite->copiedFromVersionId = (int)$sourceVersion->id;
             $driveFileWriteResult = $this->getDriveVersionsService()->writeFile($targetDriveSpace, $targetFolderNode, $targetName, $driveFileWrite);

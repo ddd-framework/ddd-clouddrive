@@ -20,13 +20,13 @@ use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
+use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 use DDD\Domain\CloudDrive\Services\DriveWorkingCopiesService;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
-use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
 use Throwable;
@@ -173,8 +173,10 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 $driveFileWrite->origin = DriveNode::ORIGIN_COPY;
                 $driveFileWrite->isContentUntrusted = (bool)$sourceNode->isContentUntrusted || $sourceSpace->isShared();
                 $driveFileWrite->ignoresExpectedVersion = true;
-                $authAccount = AuthService::instance()->getAccount();
-                $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+                /** @var DriveChangesService $driveChangesService */
+                $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+                $driveFileWrite->authorAccountId = $driveChangesService->findActingAccountIdOfCurrentCaller();
+                $driveFileWrite->onBehalfOfAccountId = $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
                 $driveFileWrite->copiedFromNodeId = (int)$sourceNode->id;
                 $driveFileWrite->copiedFromVersionId = (int)$sourceVersion->id;
                 $driveFileWrite->workingCopyKey = $targetMount->isOwnDrive ? $this->findOwnWorkingCopyOfCall($callProvenance, $targetSpace)?->workingCopyKey : null;

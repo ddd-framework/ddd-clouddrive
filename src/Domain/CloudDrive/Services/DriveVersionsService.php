@@ -26,7 +26,6 @@ use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersions;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Libs\Config;
-use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Throwable;
@@ -158,7 +157,9 @@ class DriveVersionsService extends EntitiesService
             ->getQuery()->execute();
         $driveNode = $this->getDriveNodesService()->find((int)$driveFileVersion->driveNodeId, false);
         if ($driveNode instanceof DriveNode) {
-            $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_RELEASED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $workingCopyKey);
+            // the release is the version's: its author and the account it was written for, also in a worker that knows
+            // nothing of the person (the ingest runs as a system job)
+            $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_RELEASED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $workingCopyKey, onBehalfOfAccountId: $driveFileVersion->onBehalfOfAccountId, actorAccountId: $driveFileVersion->authorAccountId);
         }
     }
 
@@ -201,7 +202,7 @@ class DriveVersionsService extends EntitiesService
         if ($effectiveBlob->state === DriveBlob::STATE_BLOCKED) {
             $driveNode = $this->getDriveNodesService()->find((int)$driveFileVersion->driveNodeId, false);
             if ($driveNode instanceof DriveNode) {
-                $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_BLOCKED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $workingCopyKey);
+                $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_BLOCKED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $workingCopyKey, onBehalfOfAccountId: $driveFileVersion->onBehalfOfAccountId, actorAccountId: $driveFileVersion->authorAccountId);
             }
         }
         return $effectiveBlob;
@@ -231,8 +232,8 @@ class DriveVersionsService extends EntitiesService
         $driveFileWrite->isContentUntrusted = $driveSpace->isShared();
         $driveFileWrite->expectedLatestVersionId = $expectedLatestVersionId;
         $driveFileWrite->ignoresExpectedVersion = $replaceExisting;
-        $authAccount = AuthService::instance()->getAccount();
-        $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        $driveFileWrite->authorAccountId = $this->getDriveChangesService()->findActingAccountIdOfCurrentCaller();
+        $driveFileWrite->onBehalfOfAccountId = $this->getDriveChangesService()->findOnBehalfOfAccountIdOfCurrentCaller();
         $driveFileWriteResult = $this->writeFile($driveSpace, $folderNode, $name, $driveFileWrite);
         if ($driveFileWriteResult->driveFileVersion !== null) {
             $this->ingestVersion($driveFileWriteResult->driveFileVersion, !(bool)$folderNode->isSystem, null, $asyncIngest);
@@ -359,8 +360,8 @@ class DriveVersionsService extends EntitiesService
         $driveFileWrite->isContentUntrusted = (bool)$driveFileVersion->isContentUntrusted;
         $driveFileWrite->copiedFromVersionId = (int)$driveFileVersion->id;
         $driveFileWrite->ignoresExpectedVersion = true;
-        $authAccount = AuthService::instance()->getAccount();
-        $driveFileWrite->authorAccountId = $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        $driveFileWrite->authorAccountId = $this->getDriveChangesService()->findActingAccountIdOfCurrentCaller();
+        $driveFileWrite->onBehalfOfAccountId = $this->getDriveChangesService()->findOnBehalfOfAccountIdOfCurrentCaller();
         $driveFileWriteResult = $this->writeVersionOfNode($driveNode, $driveBlob, $driveFileWrite);
         if ($driveFileWriteResult->driveFileVersion !== null) {
             // the content is released already: the read head moves at once
@@ -429,8 +430,10 @@ class DriveVersionsService extends EntitiesService
         $authorAccountIds = [];
         foreach ($driveFileVersions->getElements() as $driveFileVersion) {
             $driveBlobIds[] = (int)$driveFileVersion->driveBlobId;
-            if ($driveFileVersion->authorAccountId !== null) {
-                $authorAccountIds[] = (int)$driveFileVersion->authorAccountId;
+            foreach ([$driveFileVersion->authorAccountId, $driveFileVersion->onBehalfOfAccountId] as $accountId) {
+                if ($accountId !== null) {
+                    $authorAccountIds[] = (int)$accountId;
+                }
             }
         }
         $driveBlobsById = [];
@@ -439,7 +442,8 @@ class DriveVersionsService extends EntitiesService
         }
         /** @var DriveActorNamesService $driveActorNamesService */
         $driveActorNamesService = DDDService::instance()->getService(DriveActorNamesService::class);
-        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($authorAccountIds, $this->getDriveSpacesService()->getCurrentAudience());
+        $audience = $this->getDriveSpacesService()->getCurrentAudience();
+        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($authorAccountIds, $audience);
         $driveFileVersionListItems = new DriveFileVersionListItems();
         foreach ($driveFileVersions->getElements() as $driveFileVersion) {
             $driveBlob = $driveBlobsById[(int)$driveFileVersion->driveBlobId] ?? null;
@@ -453,7 +457,12 @@ class DriveVersionsService extends EntitiesService
             $this->applySystemNoteToVersionListItem($driveFileVersionListItem, $driveFileVersion);
             $driveFileVersionListItem->origin = $driveFileVersion->origin;
             $driveFileVersionListItem->authorAccountId = $driveFileVersion->authorAccountId;
-            $driveFileVersionListItem->authorName = $driveFileVersion->authorAccountId !== null ? ($accountDisplayNames[(int)$driveFileVersion->authorAccountId] ?? null) : null;
+            $driveFileVersionListItem->onBehalfOfAccountId = $driveFileVersion->onBehalfOfAccountId;
+            // the same names as the history: the author as the audience sees them, the account written for beside it
+            $driveFileVersionListItem->authorName = $driveFileVersion->authorAccountId !== null
+                ? $driveActorNamesService->buildActorDisplayName((int)$driveFileVersion->authorAccountId, $driveFileVersion->onBehalfOfAccountId, $audience, $accountDisplayNames)
+                : null;
+            $driveFileVersionListItem->onBehalfOfName = $driveFileVersion->onBehalfOfAccountId !== null ? ($accountDisplayNames[(int)$driveFileVersion->onBehalfOfAccountId] ?? null) : null;
             $driveFileVersionListItem->createdAt = $driveFileVersion->getCreatedTime();
             $driveFileVersionListItem->scanStatus = $driveBlob?->findScanStatus();
             $driveFileVersionListItem->scanDetail = $driveBlob?->stateReason;

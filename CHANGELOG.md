@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-rc.20
+
+- Added (actors): `DriveChangesService::findActingAccountIdOfCurrentCaller()` beside
+  `findOnBehalfOfAccountIdOfCurrentCaller()`. One hook pair for every write path: the creator of files and folders, the
+  author and `onBehalfOfAccountId` of every version (upload, restore, transfer between spaces, agent copy, working copy
+  commit; before, the author was the signed-in account and the version's on-behalf column stayed empty), the actor of
+  changes, accesses and host events. A host with impersonation overrides both (staff acts, the impersonated account is
+  acted for) and can drop an app-side bridge of the version author.
+- Fixed (scan release): RELEASED and BLOCKED name the version's author and account acted for, also when the ingest runs
+  in a worker without the person (before: the worker's empty or the impersonated account). Old messages work unchanged
+  (the version carries both).
+- Added (answers): `DriveNodeListItem::createdOnBehalfOfAccountId` / `createdOnBehalfOfName` (from the node's CREATED or
+  COPIED_IN change context; null without the activity table) and `DriveFileVersionListItem::onBehalfOfAccountId` /
+  `onBehalfOfName`; `createdByName` and `authorName` go through `DriveActorNamesService::buildActorDisplayName()` with
+  the account acted for, like the history. No new column.
+- `recordChange()` takes an optional `$actorAccountId` (default: the acting account).
+
 ## 0.1.0-rc.19
 
 - Changed (version history): the notes the drive writes on a version come as a code with parameters on

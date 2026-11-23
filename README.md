@@ -93,7 +93,14 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    under the company's name for partners), `DriveActorNamesService::buildActorDisplayName()` — override them in the
    host. Further host hooks: `DriveSpacesService::isWriteAllowedForAudience()`,
    `DriveTypePoliciesService::buildTypePolicyForSpace()`, `DriveContentGrantsService::isVariantAllowed()`,
-   `DriveChangesService::findOnBehalfOfAccountIdOfCurrentCaller()`; contracts (autoconfigured):
+   and **who acts for whom**: `DriveChangesService::findActingAccountIdOfCurrentCaller()` (default the signed-in
+   account) and `findOnBehalfOfAccountIdOfCurrentCaller()` (default none). A host with impersonation overrides both
+   (the staff member acts, the impersonated account is acted for); every write path follows them — the creator of
+   files and folders, the author and `onBehalfOfAccountId` of every version (upload, restore, transfer, agent copy,
+   working copy commit), each change and access, and the release or block a worker records after the scan (it names
+   the version's author and account acted for). Answers carry `createdOnBehalfOfAccountId` / `createdOnBehalfOfName`
+   on nodes and `onBehalfOfAccountId` / `onBehalfOfName` on versions; names go through `buildActorDisplayName()`. An
+   app-side bridge that set the version author itself can go. Contracts (autoconfigured):
    `DriveSpaceTransferListener`, `DriveNodeLifecycleListener`, `DriveSvgSanitizer`.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
    failed scans and lost ingests again (blobs an early release stored BLOCKED after a failed scan are put back first),

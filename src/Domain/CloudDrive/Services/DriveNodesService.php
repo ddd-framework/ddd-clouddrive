@@ -29,7 +29,6 @@ use DDD\Infrastructure\Base\DateTime\DateTime;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
-use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
 use Throwable;
@@ -690,9 +689,14 @@ class DriveNodesService extends EntitiesService
             $driveBlobsById[(int)$driveBlob->id] = $driveBlob;
         }
         $nodeIdsWithStagedChanges = array_flip($this->getDriveWorkingCopiesService()->findNodeIdsWithStagedChanges((int)$driveSpace->id, $nodeIds));
+        $creationOnBehalfOfAccountIds = $this->getDriveChangesService()->findCreationOnBehalfOfAccountIds($nodeIds);
+        foreach ($creationOnBehalfOfAccountIds as $onBehalfOfAccountId) {
+            $accountIds[] = $onBehalfOfAccountId;
+        }
+        $audience = $this->getDriveSpacesService()->getCurrentAudience();
         /** @var DriveActorNamesService $driveActorNamesService */
         $driveActorNamesService = DDDService::instance()->getService(DriveActorNamesService::class);
-        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($accountIds, $this->getDriveSpacesService()->getCurrentAudience());
+        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($accountIds, $audience);
         $thumbnailLifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
         /** @var DriveContentGrantsService $driveContentGrantsService */
         $driveContentGrantsService = DDDService::instance()->getService(DriveContentGrantsService::class);
@@ -710,7 +714,12 @@ class DriveNodesService extends EntitiesService
             $driveNodeListItem->isSystem = (bool)$driveNode->isSystem;
             $driveNodeListItem->hasWorkingCopyChanges = isset($nodeIdsWithStagedChanges[(int)$driveNode->id]);
             $driveNodeListItem->createdByAccountId = $driveNode->createdByAccountId;
-            $driveNodeListItem->createdByName = $driveNode->createdByAccountId !== null ? ($accountDisplayNames[(int)$driveNode->createdByAccountId] ?? null) : null;
+            $driveNodeListItem->createdOnBehalfOfAccountId = $creationOnBehalfOfAccountIds[(int)$driveNode->id] ?? null;
+            $driveNodeListItem->createdByName = $driveNode->createdByAccountId !== null
+                ? $driveActorNamesService->buildActorDisplayName((int)$driveNode->createdByAccountId, $driveNodeListItem->createdOnBehalfOfAccountId, $audience, $accountDisplayNames)
+                : null;
+            $driveNodeListItem->createdOnBehalfOfName = $driveNodeListItem->createdOnBehalfOfAccountId !== null
+                ? ($accountDisplayNames[$driveNodeListItem->createdOnBehalfOfAccountId] ?? null) : null;
             $driveNodeListItem->createdAt = $driveNode->getCreatedTime();
             $driveNodeListItem->updatedAt = $driveNode->getLastEditTime();
             $driveNodeListItem->trashedAt = $driveNode->trashedAt;
@@ -1139,10 +1148,20 @@ class DriveNodesService extends EntitiesService
         }
     }
 
+    /** The acting account ({@see DriveChangesService::findActingAccountIdOfCurrentCaller()}, the one hook a host overrides) */
     protected function findActingAccountId(): ?int
     {
-        $authAccount = AuthService::instance()->getAccount();
-        return $authAccount !== null && isset($authAccount->id) ? (int)$authAccount->id : null;
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        return $driveChangesService->findActingAccountIdOfCurrentCaller();
+    }
+
+    /** The account the acting account acts for ({@see DriveChangesService::findOnBehalfOfAccountIdOfCurrentCaller()}) */
+    protected function findOnBehalfOfAccountId(): ?int
+    {
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        return $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
     }
 
     protected function getDriveSpacesService(): DriveSpacesService
