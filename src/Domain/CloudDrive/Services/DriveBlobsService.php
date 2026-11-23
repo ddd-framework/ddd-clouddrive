@@ -24,6 +24,8 @@ use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\ObjectStorage\ObjectStorage;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\ObjectStorageService;
+use DDD\Infrastructure\Untrusted\RasterImageDecoder;
+use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
 use Throwable;
 
 /**
@@ -217,6 +219,7 @@ class DriveBlobsService extends EntitiesService
                 $this->markForPurge($driveBlob);
                 return $releasedBlob;
             }
+            $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType);
             $driveScanResult = $isScanned ? $this->scanFile($temporaryFilePath) : DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN);
             $driveBlob->state = match ($driveScanResult->outcome) {
                 DriveScanResult::OUTCOME_CLEAN => DriveBlob::STATE_RELEASED,
@@ -225,7 +228,7 @@ class DriveBlobsService extends EntitiesService
             };
             $driveBlob->stateReason = $driveScanResult->detail;
             $driveBlob->expiresAt = null;
-            $driveBlob->updatePartialIgnoringRights('sha256', 'state', 'stateReason', 'expiresAt');
+            $driveBlob->updatePartialIgnoringRights('sha256', 'contentType', 'state', 'stateReason', 'expiresAt');
             return $driveBlob;
         } finally {
             @unlink($temporaryFilePath);
@@ -282,23 +285,38 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * The malware scan of a file: CLEAN (or no scanner configured), INFECTED (exit 1) or FAILED (any other exit: the
-     * scanner is missing or has no signatures; fail closed, scanned again later).
+     * The malware scan of a file by the scanner the setting `malwareScanner` names ({@see DriveMalwareScannersService}):
+     * CLEAN, INFECTED (blocked for good) or FAILED (not installed, no signatures, a timeout, no scanner configured;
+     * fail closed: never released, scanned again by `app:drive:maintain`). Only `malwareScanner: none` releases
+     * unscanned.
      */
     public function scanFile(string $filePath): DriveScanResult
     {
-        $scannerCommand = trim((string)Config::get('CloudDrive.settings.malwareScannerCommand'));
-        if ($scannerCommand === '') {
-            return DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN);
+        /** @var DriveMalwareScannersService $driveMalwareScannersService */
+        $driveMalwareScannersService = DDDService::instance()->getService(DriveMalwareScannersService::class);
+        return $driveMalwareScannersService->scanFile($filePath);
+    }
+
+    /**
+     * The content type a blob keeps, from its bytes: an allowed raster image (JPEG, PNG, GIF, WebP, HEIC) gets the type
+     * its magic bytes name; bytes that only claim an image type get `application/octet-stream`; anything else keeps
+     * the declared type (normalised), which is used for attachments only.
+     *
+     * @param string $filePath server-generated
+     * @param string|null $declaredContentType what the uploader said
+     * @return string
+     */
+    public static function detectContentTypeOfFile(string $filePath, ?string $declaredContentType): string
+    {
+        $detectedMimeType = RasterImageDecoder::detectMimeType(RasterImageDecoder::readHead($filePath));
+        if ($detectedMimeType !== null) {
+            return $detectedMimeType;
         }
-        $scannerOutput = [];
-        $exitCode = 0;
-        exec($scannerCommand . ' ' . escapeshellarg($filePath) . ' 2>&1', $scannerOutput, $exitCode);
-        return match ($exitCode) {
-            0 => DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN),
-            1 => DriveScanResult::create(DriveScanResult::OUTCOME_INFECTED, 'malware: ' . implode(' ', $scannerOutput)),
-            default => DriveScanResult::create(DriveScanResult::OUTCOME_FAILED, 'scan failed (exit ' . $exitCode . '): ' . implode(' ', $scannerOutput)),
-        };
+        $normalizedContentType = UntrustedContentHeaders::normalizeContentType($declaredContentType);
+        if ($normalizedContentType === '' || str_starts_with($normalizedContentType, 'image/')) {
+            return UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        }
+        return $normalizedContentType;
     }
 
     /** Blobs whose scan failed, oldest first: the maintenance scans them again */
@@ -345,12 +363,19 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * A presigned GET of a blob; the purpose was checked by {@see DriveContentGrantsService}.
+     * A presigned GET of a blob; the purpose was checked by {@see DriveContentGrantsService}. Inline only for the raster
+     * allow-list (JPEG, PNG, GIF, WebP); everything else is an attachment, and a type a browser would run (HTML, SVG,
+     * XML, JavaScript) is served as `application/octet-stream`.
      */
     public function createDownloadRequestUrl(DriveBlob $driveBlob, string $fileName, bool $asAttachment, int $lifetimeSeconds): string
     {
-        $disposition = ($asAttachment ? 'attachment' : 'inline') . '; filename="' . addcslashes(preg_replace('/[\x00-\x1F"\\\\]/', '_', $fileName) ?? 'file', '"') . '"; filename*=UTF-8\'\'' . rawurlencode($fileName);
-        return $this->getObjectStorage()->createTemporaryUrl((string)$driveBlob->storageKey, $lifetimeSeconds, $driveBlob->contentType ?? 'application/octet-stream', $disposition);
+        $contentType = UntrustedContentHeaders::normalizeContentType($driveBlob->contentType);
+        $isInline = !$asAttachment && UntrustedContentHeaders::isInlineContentType($contentType);
+        if (!$isInline && ($contentType === '' || in_array($contentType, UntrustedContentHeaders::ACTIVE_CONTENT_TYPES, true))) {
+            $contentType = UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        }
+        $disposition = UntrustedContentHeaders::buildContentDisposition($isInline, $fileName);
+        return $this->getObjectStorage()->createTemporaryUrl((string)$driveBlob->storageKey, $lifetimeSeconds, $contentType, $disposition);
     }
 
     public function markFailed(DriveBlob $driveBlob, string $reason): void

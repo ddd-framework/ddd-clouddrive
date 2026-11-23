@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-rc.9
+
+- Changed (untrusted input, needs mgamadeus/ddd ^3.40.0): the malware scan is a scanner contract that fails closed.
+  `DriveMalwareScanner` (tag `clouddrive.malware_scanner`, autoconfigured), selected by the setting `malwareScanner`
+  (default `clamscan`; `none` releases unscanned, development only). The module's `ClamscanDriveMalwareScannerService`
+  runs `clamscan` as an isolated process (argument array, no shell, stripped environment, timeout) with the limits of
+  the `clamscan` block (defaults: `maxFileSize` 2000M, `maxScanSize` 4000M, `maxRecursion` 16, `maxFiles` 10000,
+  `alertExceedsMax` and `alertEncrypted` true, `timeoutSeconds` 600, `databaseDirectory` null). An unknown or empty
+  scanner name, a missing scanner, missing signatures or a timeout leave the blob `SCAN_FAILED`; before, an empty
+  command meant CLEAN and a scan ran through a shell string.
+- Deprecated: `malwareScannerCommand`. A host that still sets it keeps working: the string is split into words and run
+  by the clamscan scanner without a shell. An empty value no longer switches the scan off (use `malwareScanner: none`).
+- Changed: the ingest takes a blob's content type from its bytes (JPEG, PNG, GIF, WebP, HEIC by their magic bytes;
+  bytes that only claim an image type become `application/octet-stream`). Inline previews only for JPEG, PNG, GIF and
+  WebP (an allow-list, before an exact-match deny-list that `text/html; charset=utf-8` passed); downloads of HTML,
+  SVG, XML and JavaScript go out as `application/octet-stream` attachments with an RFC 6266 file name.
+- Changed: `DriveTextMergeService` runs `git merge-file` as an isolated process (stripped environment, 30 s timeout).
+- Added: the sink scan test (`tests/UntrustedSinkScanTest.php`, `config/untrusted-sinks-allowlist.php`).
+
 ## 0.1.0-rc.8
 
 - Fixed: the maintenance measured a waiting blob's age (lost ingest) and a system-folder file's age (expiry) by

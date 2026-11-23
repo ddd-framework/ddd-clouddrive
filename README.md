@@ -16,8 +16,10 @@ folders and versioned files whose bytes live in object storage, working copies f
   unique per folder; trash and restore; tags and descriptions; a change feed (`DriveChangeEvent`).
 - **Bytes**: direct presigned upload and download, PHP never proxies bytes. Every object is written once: a key per
   blob, `If-None-Match: *` signed into each PUT, multipart uploads completed only by the server onto a free key,
-  `Content-MD5` verified by the store. The ingest computes the SHA-256, scans (`clamscan`), deduplicates per space and
-  releases or blocks. People read only released content (`DriveContentGrantsService`).
+  `Content-MD5` verified by the store. The ingest computes the SHA-256, takes the content type from the bytes, scans,
+  deduplicates per space and releases or blocks. People read only released content (`DriveContentGrantsService`):
+  inline only for JPEG, PNG, GIF and WebP, everything else as an attachment (HTML, SVG, XML, JavaScript as
+  `application/octet-stream`).
 - **Working copies** (`DriveWorkingCopiesService`): a sandbox saves changes (`stageChanges()`), commits them with a
   compare and swap on each file's newest version (`commitChanges()`), pulls what others changed
   (`findChangesSince()`). A conflict is never overwritten: it stays saved until it is resolved with mine, theirs or
@@ -48,13 +50,24 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    failed scans and lost ingests again, the blob sweep. A scan takes seconds (clamscan loads its signatures each
    time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
    `drive_ingest` and give it a consumer (worker list).
-6. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts, and
+6. The malware scanner (`CloudDrive.settings.malwareScanner`, default `clamscan` with the limits of the `clamscan`
+   block: `binary`, `databaseDirectory`, `maxFileSize`, `maxScanSize`, `maxRecursion`, `maxFiles`, `alertExceedsMax`,
+   `alertEncrypted`, `timeoutSeconds`). It fails closed: a scanner that is missing, has no signatures, times out or is
+   unknown by name leaves the blob `SCAN_FAILED` (never released, scanned again by the maintenance). A host's own
+   scanner implements `DriveMalwareScanner` (autoconfigured) and is named in the setting; `none` releases unscanned
+   (development only). The old `malwareScannerCommand` string still works (split into words, never a shell) but is
+   deprecated.
+7. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts, and
    `findWorkingCopyKeyOfCall()` when the sandbox's workspace key is not on every call; without a key the tools use the
    own drive's newest working copy) and bind the skill in `config/app/AI/skillPackages.php`:
    `'Assistant.Drive' => ['clouddrive', 'agent.drive']`. A working copy entry's `conversationKey` is the id of the
    delegation tree's root conversation.
 
 `app:drive:spaces:create` creates a library space.
+
+Untrusted input: every file in a drive is foreign. The module never decodes, converts or executes it on the server
+(scanner and merge run as `IsolatedProcess`, downloads carry a server-chosen type); see the Core skill
+`ddd-untrusted-input-specialist`.
 
 Evals (ddd-agents ≥ 0.1.29): every case gets a throwaway own drive seeded from its `scratchFiles`; further mounts are
 read-only during the case; the space is erased at the end (`--keepWorkspace` keeps it).

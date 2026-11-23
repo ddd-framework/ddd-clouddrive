@@ -21,10 +21,26 @@ return [
     'asyncIngest' => false,
     // the maintenance redoes the ingest of a version whose blob waits longer than this (a lost worker run)
     'staleIngestMinutes' => 15,
-    // the scanner command (exit 0 clean, 1 infected, anything else: the scan failed and is retried by
-    // app:drive:maintain); add `--database=<dir>` when the signatures are not in clamscan's default place;
-    // '' = no scan (development only: blobs are released unscanned)
-    'malwareScannerCommand' => 'clamscan --no-summary --stdout',
+    // the malware scanner of the ingest, by name (DriveMalwareScanner::getScannerName(), or its class): 'clamscan'
+    // (the module's, settings below) or a host's own scanner. Fails closed: an unknown or empty name, a scanner that
+    // cannot run or times out leaves the blob SCAN_FAILED (never released; app:drive:maintain scans it again).
+    // 'none' releases unscanned: development only.
+    // (deprecated: `malwareScannerCommand`, a command string, is still split into words and run by the clamscan scanner)
+    'malwareScanner' => 'clamscan',
+    'clamscan' => [
+        'binary' => 'clamscan',
+        // the signature directory when it is not clamscan's default (e.g. the one freshclam keeps current)
+        'databaseDirectory' => null,
+        // limits; with alertExceedsMax / alertEncrypted a file above them or an encrypted archive is reported (BLOCKED)
+        // instead of passing unscanned
+        'maxFileSize' => '2000M',
+        'maxScanSize' => '4000M',
+        'maxRecursion' => 16,
+        'maxFiles' => 10000,
+        'alertExceedsMax' => true,
+        'alertEncrypted' => true,
+        'timeoutSeconds' => 600,
+    ],
     // system folders of an agent workspace: hidden, not scanned; their files expire after this many days
     'systemFolders' => [
         'work' => ['expiryDays' => 7],

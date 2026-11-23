@@ -20,17 +20,19 @@ use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
+use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
 
 /**
  * The one gate for file content: a short-lived URL per version and purpose, under the reader's rights. People read
- * only released content (DOWNLOAD as attachment, INLINE for a preview, never inline for HTML or SVG). A working copy
+ * only released content (DOWNLOAD as attachment, INLINE for a preview of JPEG, PNG, GIF or WebP only — the type comes
+ * from the bytes at ingest; anything else is an attachment even when INLINE is asked). A working copy
  * gets its own unreleased content back (WORKSPACE_RESTORE): staged blobs of its entries and pending versions of its
  * space, never downloadable by people.
  */
 class DriveContentGrantsService extends Service
 {
-    /** @var string[] Types never served inline: a browser would run them in the store's origin */
-    public const array NEVER_INLINE_CONTENT_TYPES = ['text/html', 'image/svg+xml', 'application/xhtml+xml', 'application/xml', 'text/xml', 'application/javascript', 'text/javascript'];
+    /** @var string[] Types never served inline (kept for callers; inline is decided by an allow-list now) */
+    public const array NEVER_INLINE_CONTENT_TYPES = UntrustedContentHeaders::ACTIVE_CONTENT_TYPES;
 
     /**
      * The content URL of a file's released version (the current one when no version is given).
@@ -62,7 +64,7 @@ class DriveContentGrantsService extends Service
             });
         }
         $asAttachment = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD
-            || in_array(strtolower((string)$driveBlob->contentType), self::NEVER_INLINE_CONTENT_TYPES, true);
+            || !UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
         return $this->buildGrant($driveBlob, (string)$driveNode->name, $purpose, $asAttachment);
     }
 
@@ -124,7 +126,7 @@ class DriveContentGrantsService extends Service
                     $driveFileCard->downloadUrl = $downloadGrant->url;
                     $driveFileCard->inlineUrl = $inlineGrant->url;
                     $driveFileCard->urlsExpireAt = $downloadGrant->expiresAt;
-                    if (str_starts_with((string)$driveNode->contentType, 'image/') && !in_array(strtolower((string)$driveNode->contentType), self::NEVER_INLINE_CONTENT_TYPES, true)) {
+                    if (UntrustedContentHeaders::isInlineContentType($inlineGrant->contentType)) {
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {
