@@ -21,6 +21,12 @@ class DriveSpaceRightsExtensionsService extends Service
     /** @var iterable<DriveSpaceRightsExtension> */
     protected iterable $extensions = [];
 
+    /**
+     * @var int Counts the applications of the extensions in this process: one query may get the rights applied several
+     *      times (READ, then WRITE), so every application hands its extensions a parameter prefix of its own
+     */
+    protected static int $applicationCount = 0;
+
     /** @param iterable<DriveSpaceRightsExtension> $extensions */
     #[Required]
     public function setExtensions(
@@ -63,8 +69,11 @@ class DriveSpaceRightsExtensionsService extends Service
     {
         $grantConditions = [];
         $extensionIndex = 0;
+        $applicationNumber = ++static::$applicationCount;
+        $rightToken = strtolower((string)preg_replace('/[^A-Za-z0-9]/', '', $right));
         foreach ($this->extensions as $driveSpaceRightsExtension) {
-            $parameterPrefix = $spaceAlias . '_rightsExtension' . $extensionIndex . '_';
+            // unique per application, right and extension: READ and WRITE on one query builder never collide
+            $parameterPrefix = $spaceAlias . '_rightsExtension' . $applicationNumber . '_' . $rightToken . '_' . $extensionIndex . '_';
             $extensionIndex++;
             try {
                 $grantCondition = $driveSpaceRightsExtension->buildSpaceRightsCondition($queryBuilder, $spaceAlias, $right, $authAccount, $parameterPrefix);

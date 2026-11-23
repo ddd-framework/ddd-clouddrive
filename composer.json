@@ -4,7 +4,7 @@
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/ddd-framework/ddd-clouddrive",
-    "version": "0.1.0-rc.17",
+    "version": "0.1.0-rc.18",
     "minimum-stability": "stable",
     "authors": [
         {

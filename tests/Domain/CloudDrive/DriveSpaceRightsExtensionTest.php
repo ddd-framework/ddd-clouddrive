@@ -42,12 +42,30 @@ class DriveSpaceRightsExtensionTest extends TestCase
 
         $readQueryBuilder = $this->createQueryBuilder();
         $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($readQueryBuilder, 'space', DBDriveSpace::RIGHT_READ, null);
-        self::assertSame('((space.spaceKind = :space_rightsExtension0_spaceKind))', (string)$readQueryBuilder->getDQLPart('where'));
-        self::assertSame('team', $readQueryBuilder->getParameter('space_rightsExtension0_spaceKind')?->getValue());
+        self::assertMatchesRegularExpression('/^\(\(space\.spaceKind = :space_rightsExtension\d+_read_0_spaceKind\)\)$/', (string)$readQueryBuilder->getDQLPart('where'));
+        self::assertSame('team', $readQueryBuilder->getParameters()->first()?->getValue());
 
         $writeQueryBuilder = $this->createQueryBuilder();
         $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($writeQueryBuilder, 'space', DBDriveSpace::RIGHT_WRITE, null);
         self::assertSame('space.id IS NULL', (string)$writeQueryBuilder->getDQLPart('where'), 'read grant gives no write');
+    }
+
+    public function testReadAndWriteAppliedToOneQueryBuilderGetDistinctPrefixes(): void
+    {
+        $scriptedDriveSpaceRightsExtension = new ScriptedDriveSpaceRightsExtension();
+        $scriptedDriveSpaceRightsExtension->grantedSpaceKindByRight = [DBDriveSpace::RIGHT_READ => 'team', DBDriveSpace::RIGHT_WRITE => 'team'];
+        $driveSpaceRightsExtensionsService = new DriveSpaceRightsExtensionsService();
+        $driveSpaceRightsExtensionsService->setExtensions([$scriptedDriveSpaceRightsExtension]);
+        $queryBuilder = $this->createQueryBuilder();
+        $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, 'space', DBDriveSpace::RIGHT_READ, null);
+        $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, 'space', DBDriveSpace::RIGHT_WRITE, null);
+        $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, 'space', DBDriveSpace::RIGHT_READ, null);
+        $parameterNames = [];
+        foreach ($queryBuilder->getParameters() as $parameter) {
+            $parameterNames[] = $parameter->getName();
+        }
+        self::assertCount(3, $parameterNames, 'every application binds its own parameter');
+        self::assertCount(3, array_unique($parameterNames), 'no application reuses another one\'s prefix');
     }
 
     public function testGrantsOfSeveralExtensionsAreOrComposed(): void
@@ -60,8 +78,8 @@ class DriveSpaceRightsExtensionTest extends TestCase
         $driveSpaceRightsExtensionsService->setExtensions([$teamExtension, $libraryExtension]);
         $queryBuilder = $this->createQueryBuilder();
         $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, 'space', DBDriveSpace::RIGHT_READ, null);
-        self::assertSame(
-            '((space.spaceKind = :space_rightsExtension0_spaceKind) OR (space.spaceKind = :space_rightsExtension1_spaceKind))',
+        self::assertMatchesRegularExpression(
+            '/^\(\(space\.spaceKind = :space_rightsExtension(\d+)_read_0_spaceKind\) OR \(space\.spaceKind = :space_rightsExtension\1_read_1_spaceKind\)\)$/',
             (string)$queryBuilder->getDQLPart('where')
         );
     }
@@ -98,7 +116,7 @@ class DriveSpaceRightsExtensionTest extends TestCase
         $this->getDriveSpaceRightsExtensionsService()->setExtensions([$scriptedDriveSpaceRightsExtension]);
         $queryBuilder = $this->createQueryBuilder();
         self::assertTrue(DBDriveSpace::applyRightsToSpaceQuery($queryBuilder, 'space', DBDriveSpace::RIGHT_MANAGE), 'conditions added = true (expand, update, delete keep them)');
-        self::assertSame('((space.spaceKind = :space_rightsExtension0_spaceKind))', (string)$queryBuilder->getDQLPart('where'));
+        self::assertMatchesRegularExpression('/^\(\(space\.spaceKind = :space_rightsExtension\d+_manage_0_spaceKind\)\)$/', (string)$queryBuilder->getDQLPart('where'));
 
         $scriptedDriveSpaceRightsExtension->isUnrestrictedByRight = [DBDriveSpace::RIGHT_MANAGE => true];
         $unrestrictedQueryBuilder = $this->createQueryBuilder();

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-rc.18
+
+- Fixed (rights): the `$parameterPrefix` handed to a `DriveSpaceRightsExtension` is unique per application of the
+  rights (`{alias}_rightsExtension{n}_{right}_{extension}_`). The module applies READ and then WRITE to one query; an
+  extension with a fixed subquery alias built from the prefix failed with "alias already defined". Extensions keep
+  building their parameter and subquery alias names from the prefix and need no counter of their own.
+- Added (contract test): `DriveSpaceRightsContractTestCase::testReadAndWriteAppliedToOneQueryRunWithoutAliasCollisions()`.
+
 ## 0.1.0-rc.17
 
 - Fixed (API schema): `DriveSpace::$account` carries `HideProperty` and the OpenAPI `Ignore`, so the host's Account

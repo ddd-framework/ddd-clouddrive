@@ -100,6 +100,23 @@ abstract class DriveSpaceRightsContractTestCase extends TestCase
         self::assertNull($this->getDriveSpacesService()->findSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_MANAGE));
     }
 
+    /**
+     * The module applies READ and then WRITE to ONE query (a write that reads its target first): the host's extension
+     * must bind its parameters and subquery aliases under the prefix it is handed, which differs per application.
+     */
+    public function testReadAndWriteAppliedToOneQueryRunWithoutAliasCollisions(): void
+    {
+        $driveSpace = $this->createSpaceWithOneFile();
+        $writerAccount = $this->createWriterAccount($driveSpace);
+        AuthService::instance()->setAccount($writerAccount);
+        $queryBuilder = DBDriveSpace::createQueryBuilder(true);
+        $baseModelAlias = DBDriveSpace::getBaseModelAlias();
+        $queryBuilder->andWhere("{$baseModelAlias}.id = :contractDriveSpaceId")->setParameter('contractDriveSpaceId', (int)$driveSpace->id);
+        DBDriveSpace::applyRightsToSpaceQuery($queryBuilder, $baseModelAlias, DBDriveSpace::RIGHT_READ);
+        DBDriveSpace::applyRightsToSpaceQuery($queryBuilder, $baseModelAlias, DBDriveSpace::RIGHT_WRITE);
+        self::assertCount(1, $queryBuilder->getQuery()->getResult(), 'the writer finds the space with READ and WRITE applied to one query');
+    }
+
     /** The rights come from DriveSpaceRightsExtension services: a second space repository or model breaks the drive */
     public function testTheSpaceIsNotSubclassedByTheHost(): void
     {
