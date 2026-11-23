@@ -14,6 +14,22 @@ use DDD\Infrastructure\Base\DateTime\DateTime;
  */
 class DriveFileVersionListItem extends ValueObject
 {
+    /** A version made by restoring an older one (parameter versionNumber) */
+    public const string COMMENT_CODE_RESTORED_FROM_VERSION = 'RESTORED_FROM_VERSION';
+
+    /** A file moved here from another space (parameter sourceSpaceDisplayName, staff only) */
+    public const string COMMENT_CODE_TRANSFERRED_FROM_SPACE = 'TRANSFERRED_FROM_SPACE';
+
+    /** A file the agent copied here from a workspace path (parameter sourcePath, staff only) */
+    public const string COMMENT_CODE_COPIED_FROM_PATH = 'COPIED_FROM_PATH';
+
+    /** @var string[] Every system note a version can carry */
+    public const array COMMENT_CODES = [
+        self::COMMENT_CODE_RESTORED_FROM_VERSION,
+        self::COMMENT_CODE_TRANSFERRED_FROM_SPACE,
+        self::COMMENT_CODE_COPIED_FROM_PATH,
+    ];
+
     public int $id = 0;
 
     public int $driveNodeId = 0;
@@ -24,7 +40,14 @@ class DriveFileVersionListItem extends ValueObject
 
     public ?string $contentType = null;
 
+    /** @var string|null Free text a person or the agent wrote; null when the version carries a system note ({@see $commentCode}) */
     public ?string $comment = null;
+
+    /** @var string|null A system note the client renders in its own language ({@see COMMENT_CODES}); null for free text */
+    public ?string $commentCode = null;
+
+    /** @var DriveFileVersionCommentParameters|null The values of the system note */
+    public ?DriveFileVersionCommentParameters $commentParameters = null;
 
     /** @var string|null UPLOAD, AGENT, COPY or MIGRATED */
     public ?string $origin = null;

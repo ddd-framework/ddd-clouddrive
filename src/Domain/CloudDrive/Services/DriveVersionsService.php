@@ -12,6 +12,7 @@ use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\TypePolicies\DriveTypePolicy;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
+use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionCommentParameters;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionListItem;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionListItems;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersions;
@@ -45,6 +46,18 @@ class DriveVersionsService extends EntitiesService
 
     /** @var string The comment of a restored version (`%d` = the restored version's number) */
     public const string RESTORED_VERSION_COMMENT = 'Restored from v%d';
+
+    /** @var string The stored form of a restore note, read back into a note code */
+    public const string RESTORED_VERSION_COMMENT_PATTERN = '/^Restored from v(\d+)$/';
+
+    /** @var string The stored form of a move between spaces (`%d` = the source space id; never shown, read back into a note code) */
+    public const string TRANSFERRED_VERSION_COMMENT = 'moved from space %d';
+
+    /** @var string The stored form of a move between spaces, read back */
+    public const string TRANSFERRED_VERSION_COMMENT_PATTERN = '/^moved from space (\d+)$/';
+
+    /** @var string The stored form of an agent copy (`%s` = the workspace path), read back */
+    public const string COPIED_VERSION_COMMENT_PATTERN = '/^copied from (.+)$/s';
 
     /**
      * Writes a file at `$name` in a folder: a new node when none is live there (and none is expected), else a new
@@ -373,6 +386,40 @@ class DriveVersionsService extends EntitiesService
     }
 
     /**
+     * Turns a note the drive itself wrote (restore, move between spaces, agent copy) into a code with parameters, so
+     * a client renders it in its own language and no internal id reaches it. The stored text stays as written; it is
+     * recognised only together with the version's own marker (restored-from version, origin COPY), so free text that
+     * happens to read the same stays free text. A SHARED caller gets no source space and no source path.
+     */
+    public function applySystemNoteToVersionListItem(DriveFileVersionListItem $driveFileVersionListItem, DriveFileVersion $driveFileVersion): void
+    {
+        $comment = (string)($driveFileVersion->comment ?? '');
+        if ($comment === '') {
+            return;
+        }
+        $isInternalAudience = $this->getDriveSpacesService()->getCurrentAudience() === DriveSpace::AUDIENCE_INTERNAL;
+        $commentParameters = new DriveFileVersionCommentParameters();
+        $matches = [];
+        if ($driveFileVersion->copiedFromVersionId !== null && preg_match(static::RESTORED_VERSION_COMMENT_PATTERN, $comment, $matches) === 1) {
+            $driveFileVersionListItem->commentCode = DriveFileVersionListItem::COMMENT_CODE_RESTORED_FROM_VERSION;
+            $commentParameters->versionNumber = (int)$matches[1];
+        } elseif ($driveFileVersion->origin === DriveNode::ORIGIN_COPY && preg_match(static::TRANSFERRED_VERSION_COMMENT_PATTERN, $comment, $matches) === 1) {
+            $driveFileVersionListItem->commentCode = DriveFileVersionListItem::COMMENT_CODE_TRANSFERRED_FROM_SPACE;
+            if ($isInternalAudience) {
+                $sourceDriveSpace = $this->getDriveSpacesService()->findSpaceWithRight((int)$matches[1], DBDriveSpace::RIGHT_READ);
+                $commentParameters->sourceSpaceDisplayName = $sourceDriveSpace !== null ? $this->getDriveSpacesService()->buildSpaceDisplayName($sourceDriveSpace) : null;
+            }
+        } elseif ($driveFileVersion->origin === DriveNode::ORIGIN_COPY && preg_match(static::COPIED_VERSION_COMMENT_PATTERN, $comment, $matches) === 1) {
+            $driveFileVersionListItem->commentCode = DriveFileVersionListItem::COMMENT_CODE_COPIED_FROM_PATH;
+            $commentParameters->sourcePath = $isInternalAudience ? $matches[1] : null;
+        } else {
+            return;
+        }
+        $driveFileVersionListItem->comment = null;
+        $driveFileVersionListItem->commentParameters = $commentParameters;
+    }
+
+    /**
      * The version history of a file for a file manager: scan status of each blob, author names, which version the
      * file shows and which is its newest, and whether each can be restored.
      */
@@ -403,6 +450,7 @@ class DriveVersionsService extends EntitiesService
             $driveFileVersionListItem->sizeBytes = $driveFileVersion->sizeBytes;
             $driveFileVersionListItem->contentType = $driveBlob?->contentType ?? $driveFileVersion->contentType;
             $driveFileVersionListItem->comment = $driveFileVersion->comment;
+            $this->applySystemNoteToVersionListItem($driveFileVersionListItem, $driveFileVersion);
             $driveFileVersionListItem->origin = $driveFileVersion->origin;
             $driveFileVersionListItem->authorAccountId = $driveFileVersion->authorAccountId;
             $driveFileVersionListItem->authorName = $driveFileVersion->authorAccountId !== null ? ($accountDisplayNames[(int)$driveFileVersion->authorAccountId] ?? null) : null;

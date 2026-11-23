@@ -263,7 +263,7 @@ class DriveSpaceTransfersService extends Service
             $copiedBlob = $this->getDriveBlobsService()->copyBlobIntoSpace($sourceBlob, $targetDriveSpace);
             $driveFileWrite = new DriveFileWrite();
             $driveFileWrite->driveBlobId = (int)$copiedBlob->id;
-            $driveFileWrite->comment = sprintf('moved from space %d', (int)$driveNode->driveSpaceId);
+            $driveFileWrite->comment = sprintf(DriveVersionsService::TRANSFERRED_VERSION_COMMENT, (int)$driveNode->driveSpaceId);
             $driveFileWrite->origin = DriveNode::ORIGIN_COPY;
             $driveFileWrite->isContentUntrusted = (bool)$driveNode->isContentUntrusted;
             $driveFileWrite->ignoresExpectedVersion = true;

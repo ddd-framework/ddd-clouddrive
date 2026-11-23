@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-rc.19
+
+- Changed (version history): the notes the drive writes on a version come as a code with parameters on
+  `DriveFileVersionListItem` — `commentCode` (`RESTORED_FROM_VERSION`, `TRANSFERRED_FROM_SPACE`, `COPIED_FROM_PATH`;
+  `COMMENT_CODES`) and `commentParameters` (`DriveFileVersionCommentParameters`: `versionNumber`,
+  `sourceSpaceDisplayName`, `sourcePath`) — and `comment` is null for them, so a client renders them in its own
+  language and no internal id reaches it. The source space (by display name) and the source path go to INTERNAL
+  callers only. The stored text is unchanged; existing rows map the same way. A note is recognised only with the
+  version's own marker (restored-from version; origin COPY), so free text that reads the same stays free text.
+
 ## 0.1.0-rc.18
 
 - Fixed (rights): the `$parameterPrefix` handed to a `DriveSpaceRightsExtension` is unique per application of the
