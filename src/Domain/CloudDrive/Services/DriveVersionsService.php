@@ -9,6 +9,7 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\TypePolicies\DriveTypePolicy;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersionListItem;
@@ -59,6 +60,12 @@ class DriveVersionsService extends EntitiesService
         if ($invalidNameReason !== null) {
             throw new BadRequestException(sprintf('"%s": %s.', $name, $invalidNameReason));
         }
+        $fileNameRefusalReason = $this->getDriveTypePoliciesService()
+            ->buildTypePolicyForSpace($driveSpace, $this->getDriveSpacesService()->getCurrentAudience())
+            ->findFileNameRefusalReason($name);
+        if ($fileNameRefusalReason !== null) {
+            throw new BadRequestException(sprintf('"%s" is not taken: %s.', $name, $fileNameRefusalReason));
+        }
         $driveBlob = $this->getDriveBlobsService()->find($driveFileWrite->driveBlobId, false);
         if (!$driveBlob instanceof DriveBlob || $driveBlob->driveSpaceId !== $driveSpace->id) {
             throw new BadRequestException(sprintf('Blob %d is no blob of this space.', $driveFileWrite->driveBlobId));
@@ -104,7 +111,7 @@ class DriveVersionsService extends EntitiesService
             $freshNode = $this->getDriveNodesService()->find((int)$driveNode->id, false);
             return $this->buildConflict($driveNode, $freshNode instanceof DriveNode ? $freshNode->latestVersionId : null, 'the file has a newer version');
         }
-        $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_VERSIONED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $driveFileWrite->workingCopyKey);
+        $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_VERSIONED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $driveFileWrite->workingCopyKey, onBehalfOfAccountId: $driveFileWrite->onBehalfOfAccountId);
         $driveFileWriteResult = new DriveFileWriteResult();
         $driveFileWriteResult->driveNode = $driveNode;
         $driveFileWriteResult->driveFileVersion = $driveFileVersion;
@@ -170,7 +177,13 @@ class DriveVersionsService extends EntitiesService
         if (!$driveBlob instanceof DriveBlob) {
             throw new InternalErrorException(sprintf('Version %d has no blob.', (int)$driveFileVersion->id));
         }
-        $effectiveBlob = $this->getDriveBlobsService()->ingestBlob($driveBlob, $isScanned);
+        $driveNode = $this->getDriveNodesService()->find((int)$driveFileVersion->driveNodeId, false);
+        $driveSpace = $driveNode instanceof DriveNode ? $this->getDriveSpacesService()->find((int)$driveNode->driveSpaceId, false) : null;
+        // the staff's policy of the kind: an audience's own narrower rules were checked when the file was written
+        $driveTypePolicy = $driveSpace instanceof DriveSpace
+            ? $this->getDriveTypePoliciesService()->buildTypePolicyForSpace($driveSpace, DriveSpace::AUDIENCE_INTERNAL)
+            : null;
+        $effectiveBlob = $this->getDriveBlobsService()->ingestBlob($driveBlob, $isScanned, $driveTypePolicy, $driveNode instanceof DriveNode ? (string)$driveNode->name : null);
         $this->releaseVersion($driveFileVersion, $effectiveBlob, $workingCopyKey);
         if ($effectiveBlob->state === DriveBlob::STATE_BLOCKED) {
             $driveNode = $this->getDriveNodesService()->find((int)$driveFileVersion->driveNodeId, false);
@@ -195,6 +208,9 @@ class DriveVersionsService extends EntitiesService
             throw new BadRequestException('The upload belongs to another space, or the target is no folder.');
         }
         $driveBlob = $this->getDriveBlobsService()->completeUpload($driveBlob);
+        if ($this->getDriveTypePoliciesService()->buildTypePolicyForSpace($driveSpace, $this->getDriveSpacesService()->getCurrentAudience())->isRestricted()) {
+            $name = DriveTypePolicy::sanitizeFileName($name);
+        }
         $driveFileWrite = new DriveFileWrite();
         $driveFileWrite->driveBlobId = (int)$driveBlob->id;
         $driveFileWrite->comment = $comment;
@@ -374,7 +390,9 @@ class DriveVersionsService extends EntitiesService
         foreach ($this->getDriveBlobsService()->findBlobsByIds($driveBlobIds)->getElements() as $driveBlob) {
             $driveBlobsById[(int)$driveBlob->id] = $driveBlob;
         }
-        $accountDisplayNames = $this->getDriveNodesService()->findAccountDisplayNames($authorAccountIds);
+        /** @var DriveActorNamesService $driveActorNamesService */
+        $driveActorNamesService = DDDService::instance()->getService(DriveActorNamesService::class);
+        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($authorAccountIds, $this->getDriveSpacesService()->getCurrentAudience());
         $driveFileVersionListItems = new DriveFileVersionListItems();
         foreach ($driveFileVersions->getElements() as $driveFileVersion) {
             $driveBlob = $driveBlobsById[(int)$driveFileVersion->driveBlobId] ?? null;
@@ -433,7 +451,7 @@ class DriveVersionsService extends EntitiesService
         $this->getDriveSpacesService()->adjustCounters((int)$driveSpace->id, 1, 0);
         $path = $this->getDriveNodesService()->buildPath($driveNode);
         $eventType = $driveFileWrite->copiedFromNodeId !== null ? DriveChangeEvent::EVENT_COPIED_IN : DriveChangeEvent::EVENT_CREATED;
-        $this->getDriveChangesService()->recordChange($driveNode, $eventType, (int)$driveFileVersion->id, $path, workingCopyKey: $driveFileWrite->workingCopyKey);
+        $this->getDriveChangesService()->recordChange($driveNode, $eventType, (int)$driveFileVersion->id, $path, workingCopyKey: $driveFileWrite->workingCopyKey, onBehalfOfAccountId: $driveFileWrite->onBehalfOfAccountId);
         $driveFileWriteResult = new DriveFileWriteResult();
         $driveFileWriteResult->driveNode = $driveNode;
         $driveFileWriteResult->driveFileVersion = $driveFileVersion;
@@ -532,6 +550,13 @@ class DriveVersionsService extends EntitiesService
         $driveFileWriteResult->conflictVersionId = $conflictVersionId;
         $driveFileWriteResult->conflictReason = $conflictReason;
         return $driveFileWriteResult;
+    }
+
+    protected function getDriveTypePoliciesService(): DriveTypePoliciesService
+    {
+        /** @var DriveTypePoliciesService $driveTypePoliciesService */
+        $driveTypePoliciesService = DDDService::instance()->getService(DriveTypePoliciesService::class);
+        return $driveTypePoliciesService;
     }
 
     protected function getDriveSpacesService(): DriveSpacesService

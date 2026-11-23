@@ -19,6 +19,9 @@ class DriveUploadRequest extends ValueObject
     /** @var string|null SHA-256 (hex) the client computed; content the space holds already is not uploaded again */
     public ?string $sha256 = null;
 
+    /** @var string|null The file's name, when known: the type policy checks its extension at the reservation */
+    public ?string $fileName = null;
+
     /** @var string|null A retried reserve with the same key gets the same blob */
     public ?string $idempotencyKey = null;
 }

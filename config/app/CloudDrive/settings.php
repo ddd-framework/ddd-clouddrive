@@ -19,6 +19,12 @@ return [
     // the ingest of a new version (hash, scan, release) in a worker: DriveIngestVersionMessage on the transport
     // `drive_ingest` (route it and give it a consumer); false = inside the request or commit (a scan of seconds each)
     'asyncIngest' => false,
+    // a move of files to another space (POST …/nodes/transfer) as a job: DriveSpaceTransferMessage on the transport
+    // `drive_ingest` (like the ingest); false = inside the request (at most 200 nodes, 2000 files)
+    'asyncTransfer' => false,
+    // an access (a preview opened: VIEWED, an original downloaded: DOWNLOADED) by the same person of the same file and
+    // version within this many seconds is recorded once; 0 = every grant
+    'accessEventDedupSeconds' => 600,
     // the maintenance redoes the ingest of a version whose blob waits longer than this (a lost worker run)
     'staleIngestMinutes' => 15,
     // the malware scanner of the ingest, by name (DriveMalwareScanner::getScannerName(), or its class): 'clamscan'

@@ -41,6 +41,25 @@ class DriveChangeEvent extends Entity
     public const string EVENT_COPIED_IN = 'COPIED_IN';
     public const string EVENT_READ_BY_AGENT = 'READ_BY_AGENT';
 
+    /** A person opened a preview (an access, recorded in the activity: {@see \DDD\Domain\CloudDrive\Entities\Activities\DriveActivityEvent}) */
+    public const string EVENT_VIEWED = 'VIEWED';
+
+    /** A person downloaded the original (an access, recorded in the activity) */
+    public const string EVENT_DOWNLOADED = 'DOWNLOADED';
+
+    /** @var string[] The drive's own event types; a host event never takes one of them */
+    public const array DRIVE_EVENT_TYPES = [
+        self::EVENT_CREATED, self::EVENT_VERSIONED, self::EVENT_RELEASED, self::EVENT_BLOCKED, self::EVENT_MOVED,
+        self::EVENT_RENAMED, self::EVENT_METADATA, self::EVENT_TRASHED, self::EVENT_RESTORED, self::EVENT_PURGED,
+        self::EVENT_COPIED_IN, self::EVENT_READ_BY_AGENT, self::EVENT_VIEWED, self::EVENT_DOWNLOADED,
+    ];
+
+    /** @var string[] The types of the history's group `accesses` (every other type is a change) */
+    public const array ACCESS_EVENT_TYPES = [self::EVENT_VIEWED, self::EVENT_DOWNLOADED, self::EVENT_READ_BY_AGENT];
+
+    public const string EVENT_GROUP_CHANGES = 'changes';
+    public const string EVENT_GROUP_ACCESSES = 'accesses';
+
     #[NotNull]
     #[DatabaseColumn(sqlType: DatabaseColumn::SQL_TYPE_BIGINT)]
     public ?int $driveSpaceId = null;

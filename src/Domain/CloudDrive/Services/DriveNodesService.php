@@ -9,6 +9,7 @@ use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
 use DDD\Domain\Base\Services\EntitiesService;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
+use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveFileFamily;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeBulkResult;
@@ -500,6 +501,12 @@ class DriveNodesService extends EntitiesService
         if ($driveNodeListQuery->createdByAccountId !== null) {
             $queryBuilder->andWhere("{$alias}.createdByAccountId = :createdByAccountId")->setParameter('createdByAccountId', $driveNodeListQuery->createdByAccountId);
         }
+        if ($driveNodeListQuery->driveNodeIds !== []) {
+            if (count($driveNodeListQuery->driveNodeIds) > DriveNodeListQuery::MAX_NODE_IDS) {
+                throw new BadRequestException(sprintf('At most %d node ids per list.', DriveNodeListQuery::MAX_NODE_IDS));
+            }
+            $queryBuilder->andWhere("{$alias}.id IN (:listedDriveNodeIds)")->setParameter('listedDriveNodeIds', array_values(array_map('intval', $driveNodeListQuery->driveNodeIds)));
+        }
         $orderDirection = strtolower($driveNodeListQuery->orderDirection) === DriveNodeListQuery::DIRECTION_DESC ? 'DESC' : 'ASC';
         $orderColumn = match ($driveNodeListQuery->orderBy) {
             DriveNodeListQuery::ORDER_BY_CREATED => 'created',
@@ -583,6 +590,24 @@ class DriveNodesService extends EntitiesService
     }
 
     /**
+     * About how many entries an unfiltered list has, from counters: a folder's live children, or every live file and
+     * folder of the space for a recursive list. Null for a filtered list (a count would cost a query per page).
+     */
+    public function findApproximateTotalCount(DriveSpace $driveSpace, DriveNodeListQuery $driveNodeListQuery): ?int
+    {
+        if (!$driveNodeListQuery->isUnfiltered()) {
+            return null;
+        }
+        if ($driveNodeListQuery->isRecursive) {
+            return (int)$driveSpace->fileCount + max(0, (int)$driveSpace->folderCount);
+        }
+        $folderNode = $driveNodeListQuery->folderNodeId !== null
+            ? $this->findNodeOfSpace($driveSpace, $driveNodeListQuery->folderNodeId)
+            : $this->findRootNode($driveSpace);
+        return $folderNode !== null && $folderNode->isFolder() ? (int)$folderNode->childCount : null;
+    }
+
+    /**
      * One page of a space's trash: the nodes trashed on their own (what a folder took along is restored and purged
      * with it), most recently trashed first.
      */
@@ -662,8 +687,12 @@ class DriveNodesService extends EntitiesService
             $driveBlobsById[(int)$driveBlob->id] = $driveBlob;
         }
         $nodeIdsWithStagedChanges = array_flip($this->getDriveWorkingCopiesService()->findNodeIdsWithStagedChanges((int)$driveSpace->id, $nodeIds));
-        $accountDisplayNames = $this->findAccountDisplayNames($accountIds);
+        /** @var DriveActorNamesService $driveActorNamesService */
+        $driveActorNamesService = DDDService::instance()->getService(DriveActorNamesService::class);
+        $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($accountIds, $this->getDriveSpacesService()->getCurrentAudience());
         $thumbnailLifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
+        /** @var DriveContentGrantsService $driveContentGrantsService */
+        $driveContentGrantsService = DDDService::instance()->getService(DriveContentGrantsService::class);
         $driveNodeListItems = new DriveNodeListItems();
         foreach ($driveNodes->getElements() as $driveNode) {
             $driveNodeListItem = new DriveNodeListItem();
@@ -706,7 +735,9 @@ class DriveNodesService extends EntitiesService
                 && (int)$driveNode->latestVersionId !== (int)$driveNode->currentVersionId
                 && $latestBlob !== null
                 && in_array($latestBlob->findScanStatus(), [DriveBlob::SCAN_STATUS_UPLOADING, DriveBlob::SCAN_STATUS_PENDING], true);
-            if ($shownBlob !== null && $shownBlob->isReadableByPeople() && UntrustedContentHeaders::isInlineContentType($shownBlob->contentType)) {
+            if ($shownBlob !== null && $shownBlob->isReadableByPeople() && UntrustedContentHeaders::isInlineContentType($shownBlob->contentType)
+                && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_THUMBNAIL, $this->getDriveSpacesService()->getCurrentAudience())
+            ) {
                 $driveNodeListItem->thumbnailUrl = $this->getDriveBlobsService()->createDownloadRequestUrl($shownBlob, (string)$driveNode->name, false, $thumbnailLifetimeSeconds);
             }
             $driveNodeListItems->add($driveNodeListItem);

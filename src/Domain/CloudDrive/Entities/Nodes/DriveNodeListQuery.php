@@ -49,6 +49,12 @@ class DriveNodeListQuery extends ValueObject
     /** @var string `asc` or `desc` */
     public string $orderDirection = self::DIRECTION_ASC;
 
+    /** @var int[] Only these nodes (at most {@see MAX_NODE_IDS}); empty = no restriction */
+    public array $driveNodeIds = [];
+
+    /** @var int The most node ids one list query takes */
+    public const int MAX_NODE_IDS = 500;
+
     public bool $includeSystem = false;
 
     public int $limit = 100;
@@ -56,11 +62,18 @@ class DriveNodeListQuery extends ValueObject
     /** @var int Rows skipped (the page cursor of a filtered or reordered list) */
     public int $offset = 0;
 
+    /** True when nothing narrows the list (no name, family, window, creator or node ids): its size comes from counters */
+    public function isUnfiltered(): bool
+    {
+        return $this->nameQuery === null && $this->family === null && $this->createdFrom === null && $this->createdTo === null
+            && $this->createdByAccountId === null && $this->driveNodeIds === [];
+    }
+
     /** True when the list is a plain folder listing (the name cursor of findChildren() applies) */
     public function isPlainFolderListing(): bool
     {
         return !$this->isRecursive && $this->nameQuery === null && $this->family === null && $this->createdFrom === null
-            && $this->createdTo === null && $this->createdByAccountId === null
+            && $this->createdTo === null && $this->createdByAccountId === null && $this->driveNodeIds === []
             && $this->orderBy === self::ORDER_BY_NAME && $this->orderDirection === self::DIRECTION_ASC;
     }
 }

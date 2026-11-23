@@ -49,4 +49,8 @@ class DriveSearchGetRequestDto extends RequestDto
     /** @var string|null The `nextCursor` of the previous page (only with filters or an order) */
     #[Parameter(in: Parameter::QUERY, required: false)]
     public ?string $cursor = null;
+
+    /** @var string|null Only these files and folders, comma-separated node ids (at most 500): e.g. the ones an application linked to something */
+    #[Parameter(in: Parameter::QUERY, required: false)]
+    public ?string $driveNodeIds = null;
 }

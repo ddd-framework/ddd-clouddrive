@@ -9,6 +9,7 @@ use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveScanResult;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\TypePolicies\DriveTypePolicy;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequests;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
@@ -26,6 +27,7 @@ use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\ObjectStorageService;
 use DDD\Infrastructure\Untrusted\RasterImageDecoder;
 use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
+use finfo;
 use Throwable;
 
 /**
@@ -48,6 +50,9 @@ class DriveBlobsService extends EntitiesService
     public const int MAX_PARTS = 10000;
     public const int MIN_PART_BYTES = 5 * 1024 * 1024;
 
+    /** @var string The start of a blob's state reason when the type policy blocked it (not the malware scan) */
+    public const string TYPE_POLICY_REFUSAL_PREFIX = 'type policy: ';
+
     /**
      * Reserves an upload into a space: checks the largest file, reserves the bytes against the quota and answers how to
      * send them. Known content (same SHA-256, released in the space) needs no upload.
@@ -63,6 +68,13 @@ class DriveBlobsService extends EntitiesService
         }
         if ($sizeBytes > $driveSpace->getEffectiveMaxFileSizeBytes()) {
             throw new BadRequestException(sprintf('The file is larger than the largest file this space takes (%d bytes).', $driveSpace->getEffectiveMaxFileSizeBytes()));
+        }
+        $driveTypePolicy = $this->getDriveTypePoliciesService()->buildTypePolicyForSpace($driveSpace, $this->getDriveSpacesService()->getCurrentAudience());
+        $typePolicyRefusalReason = $driveTypePolicy->findSizeRefusalReason($sizeBytes)
+            ?? $driveTypePolicy->findAnnouncedContentTypeRefusalReason($driveUploadRequest->contentType)
+            ?? ($driveUploadRequest->fileName !== null ? $driveTypePolicy->findFileNameRefusalReason(DriveTypePolicy::sanitizeFileName($driveUploadRequest->fileName)) : null);
+        if ($typePolicyRefusalReason !== null) {
+            throw new BadRequestException('Not taken: ' . $typePolicyRefusalReason . '.');
         }
         if ($driveUploadRequest->idempotencyKey !== null) {
             $existingBlob = $this->findBlobByIdempotencyKey($driveSpace, $driveUploadRequest->idempotencyKey);
@@ -190,13 +202,14 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * Reads the stored bytes once: SHA-256, the malware scan (unless `$isScanned` is false, e.g. for system folders),
-     * then RELEASED or BLOCKED. Equal content released in the space before wins: the version is pointed at that blob
-     * and this one is purged. Answers the blob the version keeps.
+     * Reads the stored bytes once: SHA-256, the type policy (`$driveTypePolicy` with the file's name: a refused type or
+     * bytes that do not fit the name are BLOCKED), the malware scan (unless `$isScanned` is false, e.g. for system
+     * folders), then RELEASED or BLOCKED. Equal content released in the space before wins: the version is pointed at
+     * that blob and this one is purged. Answers the blob the version keeps.
      *
      * @throws InternalErrorException
      */
-    public function ingestBlob(DriveBlob $driveBlob, bool $isScanned = true): DriveBlob
+    public function ingestBlob(DriveBlob $driveBlob, bool $isScanned = true, ?DriveTypePolicy $driveTypePolicy = null, ?string $fileName = null): DriveBlob
     {
         if (!in_array($driveBlob->state, [DriveBlob::STATE_PENDING, DriveBlob::STATE_STAGED, DriveBlob::STATE_SCAN_FAILED], true)) {
             return $driveBlob;
@@ -213,6 +226,21 @@ class DriveBlobsService extends EntitiesService
                 return $driveBlob;
             }
             $driveBlob->sha256 = $sha256;
+            if ($driveTypePolicy !== null && $driveTypePolicy->isRestricted()) {
+                $contentRefusalReason = $driveTypePolicy->findContentRefusalReason(
+                    $fileName,
+                    static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType),
+                    static::sniffContentTypeOfFile($temporaryFilePath)
+                );
+                if ($contentRefusalReason !== null) {
+                    $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType);
+                    $driveBlob->state = DriveBlob::STATE_BLOCKED;
+                    $driveBlob->stateReason = mb_substr(self::TYPE_POLICY_REFUSAL_PREFIX . $contentRefusalReason, 0, 1000);
+                    $driveBlob->expiresAt = null;
+                    $driveBlob->updatePartialIgnoringRights('sha256', 'contentType', 'state', 'stateReason', 'expiresAt');
+                    return $driveBlob;
+                }
+            }
             $releasedBlob = $this->findReleasedBlobBySha256((int)$driveBlob->driveSpaceId, $sha256);
             if ($releasedBlob !== null && $releasedBlob->id !== $driveBlob->id) {
                 $this->pointVersionsAtBlob($driveBlob, $releasedBlob);
@@ -319,6 +347,25 @@ class DriveBlobsService extends EntitiesService
         return $normalizedContentType;
     }
 
+    /**
+     * The type libmagic reads from a file's bytes (`application/octet-stream` when it cannot tell): for the type
+     * policy's check that the bytes fit the name; never stored or served.
+     *
+     * @param string $filePath server-generated
+     */
+    public static function sniffContentTypeOfFile(string $filePath): string
+    {
+        $rasterMimeType = RasterImageDecoder::detectMimeType(RasterImageDecoder::readHead($filePath));
+        if ($rasterMimeType !== null) {
+            return $rasterMimeType;
+        }
+        if (!class_exists(finfo::class)) {
+            return UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        }
+        $sniffedContentType = (new finfo(FILEINFO_MIME_TYPE))->file($filePath);
+        return is_string($sniffedContentType) && $sniffedContentType !== '' ? strtolower($sniffedContentType) : UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+    }
+
     /** Blobs whose scan failed, oldest first: the maintenance scans them again */
     public function findBlobsWithFailedScan(int $limit = 100): DriveBlobs
     {
@@ -421,6 +468,9 @@ class DriveBlobsService extends EntitiesService
             $objectStorage->abortMultipartUpload((string)$driveBlob->storageKey, $driveBlob->multipartUploadId);
         }
         $objectStorage->deleteObject((string)$driveBlob->storageKey);
+        if (UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === DriveContentGrantsService::SVG_CONTENT_TYPE) {
+            $objectStorage->deleteObject(static::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey));
+        }
         $this->getDriveSpacesService()->releaseBytes((int)$driveBlob->driveSpaceId, (int)$driveBlob->sizeBytes);
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
@@ -428,6 +478,12 @@ class DriveBlobsService extends EntitiesService
         } finally {
             DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
         }
+    }
+
+    /** The key of a blob's sanitised SVG copy ({@see DriveSvgSanitizer}): next to the blob, deleted with it */
+    public static function buildSanitizedSvgStorageKey(string $storageKey): string
+    {
+        return $storageKey . '.sanitized.svg';
     }
 
     /** `<space id>/<yyyy>/<blob id>-<random>`: unique per blob, never reused */
@@ -468,6 +524,13 @@ class DriveBlobsService extends EntitiesService
             ->setParameter('releasedBlobId', (int)$releasedBlob->id)
             ->setParameter('duplicateBlobId', (int)$duplicateBlob->id)
             ->getQuery()->execute();
+    }
+
+    protected function getDriveTypePoliciesService(): DriveTypePoliciesService
+    {
+        /** @var DriveTypePoliciesService $driveTypePoliciesService */
+        $driveTypePoliciesService = DDDService::instance()->getService(DriveTypePoliciesService::class);
+        return $driveTypePoliciesService;
     }
 
     protected function getDriveSpacesService(): DriveSpacesService

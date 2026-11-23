@@ -41,6 +41,16 @@ class DriveSpaceMountResolverService extends Service
         return $callProvenance->workspaceKey !== null && $callProvenance->workspaceKey !== '' ? $callProvenance->workspaceKey : null;
     }
 
+    /**
+     * The audience the agent acts as for a call ({@see DriveSpacesService::getCurrentAudience()}): INTERNAL (the
+     * staff) by default. A host whose agent works for a partner on shared spaces answers SHARED: the partner's write
+     * lock, type policy and content variants then apply to the drive tools.
+     */
+    public function findAgentAudienceOfCall(AgentToolCallProvenance $callProvenance): string
+    {
+        return DriveSpace::AUDIENCE_INTERNAL;
+    }
+
     /** The further spaces the sandbox mounts: only spaces every operator allowed on the agent space may read */
     public function findMountsOfAgentSpace(AgentSpace $agentSpace): DriveSpaceMounts
     {

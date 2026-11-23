@@ -14,7 +14,7 @@ class DriveContentGetRequestDto extends RequestDto
     #[Parameter(in: Parameter::PATH, required: true)]
     public int $driveNodeId;
 
-    /** @var string|null DOWNLOAD (default) or INLINE */
+    /** @var string|null DOWNLOAD (default: the original as an attachment, logged as DOWNLOADED), INLINE (a preview, logged as VIEWED) or THUMBNAIL (a list's picture, not logged) */
     #[Parameter(in: Parameter::QUERY, required: false)]
     public ?string $purpose = null;
 

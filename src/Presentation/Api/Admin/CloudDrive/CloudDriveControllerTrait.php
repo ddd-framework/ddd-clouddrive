@@ -14,12 +14,14 @@ use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
+use DDD\Domain\CloudDrive\Services\DriveActivityEventsService;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveMaintenanceService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
+use DDD\Domain\CloudDrive\Services\DriveSpaceTransfersService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 use DDD\Infrastructure\Base\DateTime\Date;
 use DDD\Infrastructure\Exceptions\BadRequestException;
@@ -46,10 +48,13 @@ use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodeMoveRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesGetResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesTransferRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSearchGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpacesGetResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceTransferPreviewResponseDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceTransferResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveTrashGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadCompleteRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadPartsRequestDto;
@@ -66,7 +71,9 @@ use DDD\Presentation\Base\Router\Routes\Post;
  * restore, a node's history, bulk move / trash / restore, purge and emptying the trash. A host mounts it with one controller that sets the path prefix, the tag
  * and the access (`#[Route('/common/cloudDrive')] class AdminCloudDriveController extends AdminController { use
  * CloudDriveControllerTrait; }`). Every read and write runs under the host's space rights; the access hook
- * {@see throwForbiddenUnlessCloudDriveAccessAllowed()} runs first in every action.
+ * {@see throwForbiddenUnlessCloudDriveAccessAllowed()} runs first in every action. A second controller with its own
+ * path, access hook and {@see getDriveAudience()} returning SHARED mounts the same actions for the shared audience
+ * (partners): reads, writes where the space is not write-locked for them, no manage actions.
  */
 trait CloudDriveControllerTrait
 {
@@ -76,13 +83,37 @@ trait CloudDriveControllerTrait
     }
 
     /**
+     * The audience the callers of this controller act as: INTERNAL (staff, the default) or SHARED (a partner mount:
+     * reads, writes only where the space is not write-locked for its audience, never manages — purge, empty trash and
+     * the other staff-only actions answer 403).
+     */
+    protected function getDriveAudience(): string
+    {
+        return DriveSpace::AUDIENCE_INTERNAL;
+    }
+
+    /**
+     * Runs first in every action: the access hook, then the controller's audience for the rest of the request.
+     *
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     */
+    protected function prepareCloudDriveAction(): void
+    {
+        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        /** @var DriveSpacesService $driveSpacesService */
+        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+        $driveSpacesService->enableAudience($this->getDriveAudience());
+    }
+
+    /**
      * The drive spaces the caller may read.
      */
     #[Get('/spaces/list')]
     #[Summary('DriveSpaces List')]
     public function listDriveSpaces(DriveSpacesService $driveSpacesService): DriveSpacesGetResponseDto
     {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $responseDto = new DriveSpacesGetResponseDto();
         $driveSpaces = $driveSpacesService->findAll(null, 500, false);
         $responseDto->driveSpaces = $driveSpaces instanceof DriveSpaces ? $driveSpaces : new DriveSpaces();
@@ -100,7 +131,7 @@ trait CloudDriveControllerTrait
     #[Summary('DriveSpace Details')]
     public function getDriveSpace(DriveSpaceGetRequestDto $requestDto, DriveSpacesService $driveSpacesService): DriveSpaceGetResponseDto
     {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $responseDto = new DriveSpaceGetResponseDto();
         $responseDto->driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
         $responseDto->item = $driveSpacesService->buildSpaceListItem(
@@ -125,7 +156,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
         $limit = max(1, min(DriveNodesService::MAX_LIST_LIMIT, $requestDto->limit ?? 100));
         $driveNodeListQuery = $this->buildDriveNodeListQuery($requestDto, $limit);
@@ -148,7 +179,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         return $this->buildDriveNodeResponse($driveNode, $driveNodesService, $driveVersionsService);
     }
@@ -168,7 +199,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $parentNode = $requestDto->parentNodeId !== null
             ? $driveNodesService->findNodeOfSpace($driveSpace, $requestDto->parentNodeId)
@@ -194,7 +225,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveBlobsService $driveBlobsService
     ): DriveUploadReservationResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $driveUploadRequest = new DriveUploadRequest();
         $driveUploadRequest->sizeBytes = $requestDto->sizeBytes;
@@ -202,6 +233,7 @@ trait CloudDriveControllerTrait
         $driveUploadRequest->contentMd5 = $requestDto->contentMd5;
         $driveUploadRequest->sha256 = $requestDto->sha256 !== null ? strtolower($requestDto->sha256) : null;
         $driveUploadRequest->idempotencyKey = $requestDto->idempotencyKey;
+        $driveUploadRequest->fileName = $requestDto->fileName !== null && trim($requestDto->fileName) !== '' ? trim($requestDto->fileName) : null;
         $responseDto = new DriveUploadReservationResponseDto();
         $responseDto->reservation = $driveBlobsService->reserveUpload($driveSpace, $driveUploadRequest);
         return $responseDto;
@@ -219,7 +251,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveBlobsService $driveBlobsService
     ): DriveUploadReservationResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveBlob = $this->requireUploadingBlob($requestDto->driveBlobId, $driveSpacesService, $driveBlobsService);
         $responseDto = new DriveUploadReservationResponseDto();
         $responseDto->reservation = $driveBlobsService->buildReservation($driveBlob, $requestDto->partNumbers !== [] ? array_map('intval', $requestDto->partNumbers) : null);
@@ -243,7 +275,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveBlob = $driveBlobsService->find($requestDto->driveBlobId, false);
         if (!$driveBlob instanceof DriveBlob) {
             throw new NotFoundException('Upload not found.');
@@ -278,8 +310,10 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * A short-lived URL of a file's released content: DOWNLOAD (attachment) or INLINE (preview; HTML and SVG always
-     * as attachment).
+     * A short-lived URL of a file's released content: DOWNLOAD (the original as an attachment, recorded as DOWNLOADED),
+     * INLINE (a preview of JPEG, PNG, GIF, WebP — an SVG only through the host's sanitiser — else an attachment;
+     * recorded as VIEWED) or THUMBNAIL (a list's picture, never recorded). The same reader, file, version and kind
+     * within `accessEventDedupSeconds` is recorded once.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -293,7 +327,7 @@ trait CloudDriveControllerTrait
         DriveVersionsService $driveVersionsService,
         DriveContentGrantsService $driveContentGrantsService
     ): DriveContentGrantResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $driveFileVersion = $requestDto->versionId !== null ? $driveVersionsService->find($requestDto->versionId, false) : null;
         if ($requestDto->versionId !== null && (!$driveFileVersion instanceof DriveFileVersion || $driveFileVersion->driveNodeId !== $driveNode->id)) {
@@ -302,6 +336,19 @@ trait CloudDriveControllerTrait
         $purpose = strtoupper((string)($requestDto->purpose ?? DriveContentGrant::PURPOSE_DOWNLOAD));
         $responseDto = new DriveContentGrantResponseDto();
         $responseDto->grant = $driveContentGrantsService->createContentGrant($driveNode, $purpose, $driveFileVersion);
+        /** @var DriveSpacesService $driveSpacesService */
+        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        /** @var DriveActivityEventsService $driveActivityEventsService */
+        $driveActivityEventsService = DDDService::instance()->getService(DriveActivityEventsService::class);
+        // the grant is the logged fact (the bytes go from the store directly); a thumbnail is no access
+        $driveActivityEventsService->recordContentAccess(
+            $driveNode,
+            $responseDto->grant,
+            $driveSpacesService->getCurrentAudience(),
+            $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller()
+        );
         return $responseDto;
     }
 
@@ -313,7 +360,7 @@ trait CloudDriveControllerTrait
     #[Summary('DriveFile Cards')]
     public function findDriveFileCards(DriveFileCardsRequestDto $requestDto, DriveContentGrantsService $driveContentGrantsService): DriveFileCardsResponseDto
     {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $responseDto = new DriveFileCardsResponseDto();
         $responseDto->cards = $driveContentGrantsService->findFileCards(array_map('strval', $requestDto->references));
         return $responseDto;
@@ -332,7 +379,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $targetFolderNode = $requestDto->targetFolderNodeId !== null ? $this->requireDriveNode($requestDto->targetFolderNodeId, $driveNodesService) : null;
         $driveNode = $driveNodesService->moveNode($driveNode, $targetFolderNode, $requestDto->name !== null ? trim($requestDto->name) : null);
@@ -351,7 +398,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $driveNode = $driveNodesService->updateMetadata($driveNode, $requestDto->tags !== null ? array_map('strval', $requestDto->tags) : null, $requestDto->description);
         return $this->buildDriveNodeResponse($driveNode, $driveNodesService, $driveVersionsService);
@@ -370,7 +417,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $driveNodesService->trashNode($this->requireDriveNode($requestDto->driveNodeId, $driveNodesService));
         return $this->buildDriveNodeResponse($driveNode, $driveNodesService, $driveVersionsService);
     }
@@ -388,7 +435,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $driveNodesService->restoreNode($this->requireDriveNode($requestDto->driveNodeId, $driveNodesService));
         return $this->buildDriveNodeResponse($driveNode, $driveNodesService, $driveVersionsService);
     }
@@ -406,7 +453,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
         $driveNodeListQuery = $this->buildDriveNodeListQuery($requestDto, max(1, min(200, $requestDto->limit ?? 50)));
         if ($driveNodeListQuery->isPlainFolderListing()) {
@@ -434,7 +481,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
         $limit = max(1, min(DriveNodesService::MAX_LIST_LIMIT, $requestDto->limit ?? 100));
         $offset = DriveNodesService::parseOffsetCursor($requestDto->cursor) ?? 0;
@@ -458,7 +505,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveFoldersGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId);
         $includeSystem = (bool)$requestDto->includeSystem || $driveSpacesService->hasRightOnSpace($driveSpace, DBDriveSpace::RIGHT_MANAGE);
         $folderNodes = $driveNodesService->findFoldersOfSpace($driveSpace, DriveNodesService::MAX_FOLDER_TREE_SIZE, $includeSystem);
@@ -485,7 +532,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveFileVersionsGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $responseDto = new DriveFileVersionsGetResponseDto();
         $responseDto->items = $driveVersionsService->buildVersionListItems($driveNode, $driveVersionsService->findVersionsOfNode($driveNode, 500));
@@ -507,7 +554,7 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveVersionsService $driveVersionsService
     ): DriveNodeGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $driveFileVersion = $driveVersionsService->find($requestDto->driveFileVersionId, false);
         if (!$driveFileVersion instanceof DriveFileVersion || (int)$driveFileVersion->driveNodeId !== (int)$driveNode->id) {
@@ -521,8 +568,9 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * The newest history entries of a file or folder (created, versioned, released, blocked, moved, renamed, trashed,
-     * restored …), newest first.
+     * The newest history entries of a file or folder, newest first: changes (created, versioned, released, blocked,
+     * moved, renamed, trashed, restored …), accesses (viewed, downloaded, read by the agent) and the application's own
+     * events; `eventTypes` (comma-separated) or `eventGroup` (`changes`, `accesses`) narrow it.
      *
      * @throws NotFoundException
      */
@@ -533,11 +581,19 @@ trait CloudDriveControllerTrait
         DriveNodesService $driveNodesService,
         DriveChangesService $driveChangesService
     ): DriveChangeEventsGetResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
         $responseDto = new DriveChangeEventsGetResponseDto();
-        $responseDto->items = $driveChangesService->buildChangeEventListItems(
-            $driveChangesService->findChangesOfNode($driveNode, $requestDto->limit ?? DriveChangesService::DEFAULT_NODE_HISTORY_LIMIT)
+        $eventTypes = null;
+        if ($requestDto->eventTypes !== null && trim($requestDto->eventTypes) !== '') {
+            $eventTypes = array_values(array_filter(array_map('trim', explode(',', strtoupper($requestDto->eventTypes))), 'strlen'));
+        }
+        $eventGroup = $requestDto->eventGroup !== null && trim($requestDto->eventGroup) !== '' ? strtolower(trim($requestDto->eventGroup)) : null;
+        $responseDto->items = $driveChangesService->buildNodeHistory(
+            $driveNode,
+            $requestDto->limit ?? DriveChangesService::DEFAULT_NODE_HISTORY_LIMIT,
+            $eventTypes,
+            $eventGroup
         );
         return $responseDto;
     }
@@ -557,7 +613,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesBulkResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $targetFolderNode = $requestDto->targetFolderNodeId !== null
             ? $driveNodesService->findNodeOfSpace($driveSpace, $requestDto->targetFolderNodeId)
@@ -584,7 +640,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesBulkResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $responseDto = new DriveNodesBulkResponseDto();
         $responseDto->result = $driveNodesService->trashNodes($driveSpace, $requestDto->driveNodeIds);
@@ -605,7 +661,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveNodesService $driveNodesService
     ): DriveNodesBulkResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
         $responseDto = new DriveNodesBulkResponseDto();
         $responseDto->result = $driveNodesService->restoreNodes($driveSpace, $requestDto->driveNodeIds);
@@ -627,7 +683,7 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveMaintenanceService $driveMaintenanceService
     ): DriveNodesBulkResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_MANAGE);
         $responseDto = new DriveNodesBulkResponseDto();
         $responseDto->result = $driveMaintenanceService->purgeTrashedNodes($driveSpace, $requestDto->driveNodeIds);
@@ -648,11 +704,108 @@ trait CloudDriveControllerTrait
         DriveSpacesService $driveSpacesService,
         DriveMaintenanceService $driveMaintenanceService
     ): DriveNodesBulkResponseDto {
-        $this->throwForbiddenUnlessCloudDriveAccessAllowed();
+        $this->prepareCloudDriveAction();
         $driveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_MANAGE);
         $responseDto = new DriveNodesBulkResponseDto();
         $responseDto->result = $driveMaintenanceService->emptyTrash($driveSpace);
         return $responseDto;
+    }
+
+    /**
+     * What moving files and folders of a space into another space would do; nothing is written: counts, whether the
+     * target's quota takes it, taken names, files the target refuses (type policy, not released), links of the
+     * application that are lost.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/transfer/preview')]
+    #[Summary('DriveNodes Transfer Preview')]
+    public function previewDriveNodesTransfer(
+        DriveNodesTransferRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveSpaceTransfersService $driveSpaceTransfersService
+    ): DriveSpaceTransferPreviewResponseDto {
+        $this->prepareCloudDriveAction();
+        $responseDto = new DriveSpaceTransferPreviewResponseDto();
+        $targetDriveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->targetDriveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $responseDto->preview = $driveSpaceTransfersService->previewTransfer(
+            $this->findDriveTransferNodes($requestDto, $driveSpacesService),
+            $targetDriveSpace,
+            $this->findDriveTransferTargetFolder($requestDto, $targetDriveSpace)
+        );
+        return $responseDto;
+    }
+
+    /**
+     * Moves files and folders of a space (at most 200, folders with their live content) into another space: a copy of
+     * each file's current content in the store, the file written and scanned in the target, then the moved source
+     * nodes purged. Needs the write right on both spaces. Runs as a job with `asyncTransfer` (`isQueued`).
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws InternalErrorException
+     */
+    #[Post('/spaces/{driveSpaceId}/nodes/transfer')]
+    #[Summary('DriveNodes Transfer')]
+    public function transferDriveNodes(
+        DriveNodesTransferRequestDto $requestDto,
+        DriveSpacesService $driveSpacesService,
+        DriveSpaceTransfersService $driveSpaceTransfersService
+    ): DriveSpaceTransferResponseDto {
+        $this->prepareCloudDriveAction();
+        $responseDto = new DriveSpaceTransferResponseDto();
+        $targetDriveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->targetDriveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $responseDto->result = $driveSpaceTransfersService->transferNodes(
+            $this->findDriveTransferNodes($requestDto, $driveSpacesService),
+            $targetDriveSpace,
+            $this->findDriveTransferTargetFolder($requestDto, $targetDriveSpace)
+        );
+        return $responseDto;
+    }
+
+    /**
+     * The nodes of a transfer request, all of its source space.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     */
+    protected function findDriveTransferNodes(DriveNodesTransferRequestDto $requestDto, DriveSpacesService $driveSpacesService): DriveNodes
+    {
+        /** @var DriveNodesService $driveNodesService */
+        $driveNodesService = DDDService::instance()->getService(DriveNodesService::class);
+        $sourceDriveSpace = $driveSpacesService->requireSpaceWithRight($requestDto->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $driveNodes = new DriveNodes();
+        foreach (DriveNodesService::normalizeBulkNodeIds($requestDto->driveNodeIds) as $driveNodeId) {
+            $driveNode = $driveNodesService->findNodeOfSpace($sourceDriveSpace, $driveNodeId);
+            if ($driveNode === null) {
+                throw new NotFoundException(sprintf('Drive node %d not found in space %d.', $driveNodeId, (int)$sourceDriveSpace->id));
+            }
+            $driveNodes->add($driveNode);
+        }
+        return $driveNodes;
+    }
+
+    /**
+     * The target folder of a transfer request; null = the target's root.
+     *
+     * @throws NotFoundException
+     */
+    protected function findDriveTransferTargetFolder(DriveNodesTransferRequestDto $requestDto, DriveSpace $targetDriveSpace): ?DriveNode
+    {
+        if ($requestDto->targetFolderNodeId === null) {
+            return null;
+        }
+        /** @var DriveNodesService $driveNodesService */
+        $driveNodesService = DDDService::instance()->getService(DriveNodesService::class);
+        $targetFolderNode = $driveNodesService->findNodeOfSpace($targetDriveSpace, $requestDto->targetFolderNodeId);
+        if ($targetFolderNode === null) {
+            throw new NotFoundException('Target folder not found in the target space.');
+        }
+        return $targetFolderNode;
     }
 
     /**
@@ -673,6 +826,19 @@ trait CloudDriveControllerTrait
         }
         if ($requestDto->orderBy !== null && $requestDto->orderBy !== '') {
             $driveNodeListQuery->orderBy = strtolower($requestDto->orderBy);
+        }
+        if ($requestDto->driveNodeIds !== null && trim($requestDto->driveNodeIds) !== '') {
+            $driveNodeIds = [];
+            foreach (explode(',', $requestDto->driveNodeIds) as $driveNodeIdText) {
+                if (!ctype_digit(trim($driveNodeIdText))) {
+                    throw new BadRequestException('driveNodeIds are node ids separated by commas.');
+                }
+                $driveNodeIds[] = (int)trim($driveNodeIdText);
+            }
+            if (count($driveNodeIds) > DriveNodeListQuery::MAX_NODE_IDS) {
+                throw new BadRequestException(sprintf('At most %d driveNodeIds.', DriveNodeListQuery::MAX_NODE_IDS));
+            }
+            $driveNodeListQuery->driveNodeIds = array_values(array_unique($driveNodeIds));
         }
         if ($requestDto->orderDirection !== null && $requestDto->orderDirection !== '') {
             $orderDirection = strtolower($requestDto->orderDirection);
@@ -708,6 +874,7 @@ trait CloudDriveControllerTrait
         $responseDto = new DriveNodesGetResponseDto();
         $responseDto->driveNodes = $driveNodesService->findNodesByListQuery($driveSpace, $driveNodeListQuery, $cursor);
         $responseDto->items = $driveNodesService->buildListItems($responseDto->driveNodes, $driveSpace);
+        $responseDto->approximateTotalCount = $driveNodesService->findApproximateTotalCount($driveSpace, $driveNodeListQuery);
         $pageSize = $responseDto->driveNodes->count();
         if ($pageSize < $driveNodeListQuery->limit) {
             return $responseDto;

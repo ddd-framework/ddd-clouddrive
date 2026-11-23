@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.1.0-rc.11
+
+- Added (audience): the caller acts as INTERNAL (staff, default) or SHARED (`DriveSpacesService::getCurrentAudience()`,
+  `enableAudience()` / `restoreAudience()`, reset to INTERNAL between requests and Messenger jobs). Every WRITE / MANAGE
+  check goes through `isRightAllowedForAudience()`: SHARED never manages, and writes only where
+  `isWriteAllowedForAudience(DriveSpace, string $audience)` allows it (default: not while `isAudienceWriteLocked`;
+  override at the same path). `CloudDriveControllerTrait::getDriveAudience()` (default INTERNAL): a second controller
+  with its own path, access hook and SHARED mounts the actions for partners (purge, empty trash and other manage
+  actions answer 403).
+- Added (type policy): `DriveTypePolicy` per space kind and audience from `config/app/CloudDrive/typePolicies.php`
+  (`allowedFamilies`, `allowedExtensions`, `allowedContentTypes`, `maxFileSizeBytes`, `refusesContentMismatch`,
+  a `shared` block for SHARED), host hook `DriveTypePoliciesService::buildTypePolicyForSpace(DriveSpace, string $audience)`.
+  Checked at the reservation (new optional `fileName`, the announced type, the size), at every write (uploads, commits,
+  copies, transfers) and at the ingest (the bytes libmagic reads must fit the name's family, programs are refused; a
+  refused content is BLOCKED with the reason `type policy: …`). A restricted policy sanitises uploaded names
+  (`DriveTypePolicy::sanitizeFileName()`). The default `default => []` restricts nothing.
+- Added (variants): `DriveContentGrant::PURPOSE_THUMBNAIL` beside DOWNLOAD and INLINE; the variant rule
+  `DriveContentGrantsService::isVariantAllowed(DriveNode, string $variant, string $audience)` (default: a trashed file
+  only as the staff's DOWNLOAD). Grants name `driveNodeId`, `driveFileVersionId`, `isInline`. An SVG is shown inline only
+  through a host's `DriveSvgSanitizer` (tag `clouddrive.svg_sanitizer`): its sanitised copy is stored next to the blob
+  and served as `image/svg+xml`.
+- Added (transfers): `DriveSpaceTransfersService::previewTransfer(DriveNodes, DriveSpace $target, ?DriveNode $folder)`
+  (`DriveSpaceTransferPreview`: counts, bytes, target quota, taken names, refused files, lost links) and
+  `transferNodes(…, ?bool $async)` (`DriveSpaceTransferResult`: source → target ids, skips); routes
+  `POST …/spaces/{id}/nodes/transfer/preview` and `…/nodes/transfer`. A copy in the store per file's current version, the
+  target's ingest, then the moved source nodes purged. Host contract `DriveSpaceTransferListener` (tag
+  `clouddrive.space_transfer_listener`): `findLinksLostOnTransfer()`, `onNodesTransferred()`. As a job with
+  `asyncTransfer` (`DriveSpaceTransferMessage` on the transport `drive_ingest`).
+- Added (lists): `driveNodeIds` (comma-separated, at most 500) on `…/children` and `…/search`; `approximateTotalCount` on
+  unfiltered lists (from counters).
+- Added (purge): `DriveNodeLifecycleListener` (tag `clouddrive.node_lifecycle_listener`) `onNodesPurged(DriveSpace,
+  int[] $driveNodeIds)` after every purge (purge, empty trash, trash retention, a transfer's source, the erase of a
+  space).
+- Added (activity): new table `DriveActivityEvents` (`DriveActivityEvent`): accesses `VIEWED` (INLINE) and `DOWNLOADED`
+  (DOWNLOAD) recorded by `GET …/nodes/{id}/content` when the URL is granted (THUMBNAIL and the drive tools' cards are
+  never recorded; the same person, file, version and kind within `accessEventDedupSeconds`, default 600, once); host
+  events `DriveChangesService::recordHostEvent(DriveNode, string $eventType, ?string $detail, ?int $actorAccountId,
+  ?int $onBehalfOfAccountId)`; the context of a change (on behalf of whom, as which audience;
+  `recordChange(…, onBehalfOfAccountId:)`, hook `findOnBehalfOfAccountIdOfCurrentCaller()`). `GET …/nodes/{id}/events`
+  merges them with the changes (`eventSource`, `onBehalfOfAccountId`, `onBehalfOfName`, `audience`, `contentVariant`,
+  `detail`) and takes `eventTypes` and `eventGroup` (`changes` / `accesses`).
+- Added (names): `DriveActorNamesService::buildActorDisplayName(?int $actorAccountId, ?int $onBehalfOfAccountId, string
+  $audience)` / `findActorDisplayNames()`; every name of the lists, versions and history goes through it
+  (default: `DriveNodesService::findAccountDisplayNames()`).
+- Added (agent): `DriveSpaceMountResolverService::findAgentAudienceOfCall()` (default INTERNAL): the drive tools act
+  as that audience; a space write-locked for it is mounted read-only.
+- Schema: one new table, `DriveActivityEvents` (apply the schema diff). Without it nothing is recorded and the history
+  shows the changes only (checked once per process: a table added later is noticed after the workers' restart). No
+  other table changes.
+
 ## 0.1.0-rc.10
 
 - Added (file manager backend, all on `CloudDriveControllerTrait`, same access hook and space rights):

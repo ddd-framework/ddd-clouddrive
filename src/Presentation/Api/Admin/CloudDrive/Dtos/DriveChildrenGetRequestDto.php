@@ -64,4 +64,8 @@ class DriveChildrenGetRequestDto extends RequestDto
     /** @var string|null `asc` (default) or `desc` */
     #[Parameter(in: Parameter::QUERY, required: false)]
     public ?string $orderDirection = null;
+
+    /** @var string|null Only these files and folders, comma-separated node ids (at most 500): e.g. the ones an application linked to something */
+    #[Parameter(in: Parameter::QUERY, required: false)]
+    public ?string $driveNodeIds = null;
 }

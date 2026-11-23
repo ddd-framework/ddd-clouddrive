@@ -123,7 +123,9 @@ class DriveMaintenanceService extends Service
             foreach (($trashedNodes instanceof DriveNodes ? $trashedNodes->getElements() : []) as $trashedNode) {
                 $resultLines[] = sprintf('%s trashed node %d of space %d', $isDryRun ? 'would purge' : 'purged', (int)$trashedNode->id, (int)$driveSpace->id);
                 if (!$isDryRun) {
-                    $this->purgeNode($trashedNode);
+                    $purgedCounts = new DriveNodeCounts();
+                    $this->purgeNode($trashedNode, $purgedCounts);
+                    $this->getDriveNodeLifecycleListenersService()->notifyNodesPurged($driveSpace, $purgedCounts->driveNodeIds);
                 }
             }
         }
@@ -272,6 +274,10 @@ class DriveMaintenanceService extends Service
         $driveSpaceId = (int)$driveSpace->id;
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
+            $erasedNodeIds = array_values(array_map('intval', DBDriveNode::createQueryBuilder()
+                ->select('erasedNode.id')->from(DBDriveNode::BASE_ORM_MODEL, 'erasedNode')
+                ->where('erasedNode.driveSpaceId = :driveSpaceId')->setParameter('driveSpaceId', $driveSpaceId)
+                ->getQuery()->getSingleColumnResult()));
             $blobRepoClass = new DBDriveBlobs();
             $queryBuilder = $blobRepoClass::createQueryBuilder(true);
             $alias = $blobRepoClass::getBaseModelAlias();
@@ -303,6 +309,10 @@ class DriveMaintenanceService extends Service
             $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
             DBDriveNode::createQueryBuilder()->delete($driveSpacesService->getSpaceModelClass(), 'space')->where('space.id = :driveSpaceId')
                 ->setParameter('driveSpaceId', $driveSpaceId)->getQuery()->execute();
+            /** @var DriveActivityEventsService $driveActivityEventsService */
+            $driveActivityEventsService = DDDService::instance()->getService(DriveActivityEventsService::class);
+            $driveActivityEventsService->deleteActivityOfSpace($driveSpaceId);
+            $this->getDriveNodeLifecycleListenersService()->notifyNodesPurged($driveSpace, $erasedNodeIds);
         } finally {
             DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
         }
@@ -379,6 +389,7 @@ class DriveMaintenanceService extends Service
         }
         $connection = EntityManagerFactory::getInstance()->getConnection();
         $connection->beginTransaction();
+        $purgedNodeIds = [];
         try {
             foreach ($trashedNodes->getElements() as $trashedNode) {
                 $purgedCounts = new DriveNodeCounts();
@@ -386,6 +397,7 @@ class DriveMaintenanceService extends Service
                 $driveNodeBulkResult->processedCount++;
                 $driveNodeBulkResult->fileCount += $purgedCounts->fileCount;
                 $driveNodeBulkResult->folderCount += $purgedCounts->folderCount;
+                array_push($purgedNodeIds, ...$purgedCounts->driveNodeIds);
             }
             $connection->commit();
         } catch (Throwable $throwable) {
@@ -394,6 +406,7 @@ class DriveMaintenanceService extends Service
             }
             throw $throwable;
         }
+        $this->getDriveNodeLifecycleListenersService()->notifyNodesPurged($driveSpace, $purgedNodeIds);
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
             $this->sweepBlobs(false, (int)$driveSpace->id);
@@ -407,6 +420,7 @@ class DriveMaintenanceService extends Service
     {
         if ($purgedCounts !== null) {
             $driveNode->isFolder() ? $purgedCounts->folderCount++ : $purgedCounts->fileCount++;
+            $purgedCounts->driveNodeIds[] = (int)$driveNode->id;
         }
         if ($driveNode->isFolder()) {
             $repoClass = new DBDriveNodes();
@@ -458,6 +472,13 @@ class DriveMaintenanceService extends Service
         $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
         $driveSpaces = $driveSpacesService->findAll(null, 10000, false);
         return $driveSpaces instanceof DriveSpaces ? $driveSpaces : new DriveSpaces();
+    }
+
+    protected function getDriveNodeLifecycleListenersService(): DriveNodeLifecycleListenersService
+    {
+        /** @var DriveNodeLifecycleListenersService $driveNodeLifecycleListenersService */
+        $driveNodeLifecycleListenersService = DDDService::instance()->getService(DriveNodeLifecycleListenersService::class);
+        return $driveNodeLifecycleListenersService;
     }
 
     protected function getDriveSpacesService(): DriveSpacesService

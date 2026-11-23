@@ -12,6 +12,17 @@ folders and versioned files whose bytes live in object storage, working copies f
 - **Rights**: the host's space repository answers read, write and manage in one method,
   `DBDriveSpace::applyRightsToSpaceQuery()`; every drive table filters through it. Default: admins everything, everyone
   else nothing. `DriveSpaceRightsContractTestCase` is the test a host runs against its rules.
+- **Audiences**: a caller acts as INTERNAL (staff) or SHARED (e.g. partners): SHARED never manages and writes only where
+  `DriveSpacesService::isWriteAllowedForAudience()` allows it (not while the space is `isAudienceWriteLocked`). A
+  partner controller mounts the same trait with `getDriveAudience()` returning SHARED.
+- **Type policy** per space kind and audience (`config/app/CloudDrive/typePolicies.php`,
+  `DriveTypePoliciesService::buildTypePolicyForSpace()`): families, extensions, types, size; checked at the
+  reservation, at every write and at the ingest (the bytes must fit the name; programs are refused).
+- **Activity**: accesses (VIEWED, DOWNLOADED, recorded when a content URL is granted, deduplicated), the application's
+  own events (`DriveChangesService::recordHostEvent()`) and on-behalf-of context, in the table `DriveActivityEvents`,
+  merged into a node's history.
+- **Transfers** between spaces with a preview (`DriveSpaceTransfersService`, `DriveSpaceTransferListener` for the
+  application's links), purge notifications (`DriveNodeLifecycleListener`).
 - **Files**: folders, files, versions (`DriveFileVersion`) and blobs (`DriveBlob`). Names are case-sensitive and
   unique per folder; trash and restore; tags and descriptions; a change feed (`DriveChangeEvent`).
 - **Bytes**: direct presigned upload and download, PHP never proxies bytes. Every object is written once: a key per
@@ -52,11 +63,20 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    `GET …/spaces/{id}/folders` (the folder tree), `…/spaces/{id}/trash`, `…/nodes/{id}/versions`, `…/nodes/{id}/events`;
    `POST …/nodes/{id}/versions/{versionId}/restore`; bulk `POST …/spaces/{id}/nodes/move|trash|restore` (200 per
    call, one transaction, skipped nodes with reasons); `POST …/spaces/{id}/nodes/purge` and `…/spaces/{id}/trash/empty`
-   (manage right). The space answers carry a quota block and, for pickers, `displayName` and `groupLabel`
+   (manage right); `POST …/spaces/{id}/nodes/transfer/preview` and `…/nodes/transfer` (to another space);
+   `driveNodeIds` on `…/children` and `…/search`; `approximateTotalCount` on unfiltered lists; `eventTypes` /
+   `eventGroup` on `…/nodes/{id}/events`; `purpose=THUMBNAIL` on `…/nodes/{id}/content` (DOWNLOAD and INLINE are
+   recorded as accesses). A partner controller overrides `getDriveAudience()` (SHARED) and
+   `throwForbiddenUnlessCloudDriveAccessAllowed()`. The space answers carry a quota block and, for pickers, `displayName` and `groupLabel`
    (`DriveSpacesService::buildSpaceDisplayName()` / `buildSpaceGroupLabel()`, default the title and the kind's
-   `label`); people's names come from `DriveNodesService::findAccountDisplayNames()` — override both in the host.
+   `label`); people's names come from `DriveNodesService::findAccountDisplayNames()` and, per audience (e.g. the staff
+   under the company's name for partners), `DriveActorNamesService::buildActorDisplayName()` — override them in the
+   host. Further host hooks: `DriveSpacesService::isWriteAllowedForAudience()`,
+   `DriveTypePoliciesService::buildTypePolicyForSpace()`, `DriveContentGrantsService::isVariantAllowed()`,
+   `DriveChangesService::findOnBehalfOfAccountIdOfCurrentCaller()`; contracts (autoconfigured):
+   `DriveSpaceTransferListener`, `DriveNodeLifecycleListener`, `DriveSvgSanitizer`.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
-   failed scans and lost ingests again, the blob sweep. A scan takes seconds (clamscan loads its signatures each
+   failed scans and lost ingests again, the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`). A scan takes seconds (clamscan loads its signatures each
    time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
    `drive_ingest` and give it a consumer (worker list).
 6. The malware scanner (`CloudDrive.settings.malwareScanner`, default `clamscan` with the limits of the `clamscan`
@@ -66,7 +86,8 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    scanner implements `DriveMalwareScanner` (autoconfigured) and is named in the setting; `none` releases unscanned
    (development only). The old `malwareScannerCommand` string still works (split into words, never a shell) but is
    deprecated.
-7. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts, and
+7. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts,
+   `findAgentAudienceOfCall()` for an agent that works for a partner, and
    `findWorkingCopyKeyOfCall()` when the sandbox's workspace key is not on every call; without a key the tools use the
    own drive's newest working copy) and bind the skill in `config/app/AI/skillPackages.php`:
    `'Assistant.Drive' => ['clouddrive', 'agent.drive']`. A working copy entry's `conversationKey` is the id of the

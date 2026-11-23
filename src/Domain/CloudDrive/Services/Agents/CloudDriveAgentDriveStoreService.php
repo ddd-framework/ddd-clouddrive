@@ -53,6 +53,9 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             return $agentDriveMounts;
         }
         $driveSpaceMountResolverService = $this->getDriveSpaceMountResolverService();
+        // the agent acts as the audience the host names for the call (the staff by default) for the rest of the job
+        // or request: its rights, the type policy and the variant rule of that audience apply to every drive tool
+        $this->getDriveSpacesService()->enableAudience($driveSpaceMountResolverService->findAgentAudienceOfCall($callProvenance));
         // an eval case with a scratch drive: that space is the own drive and every further mount is read-only
         $scratchDriveSpace = $callProvenance->workspaceKey !== null
             ? $this->getDriveSpacesService()->findSpaceByScratchKey($callProvenance->workspaceKey)
@@ -67,10 +70,17 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             if ($driveSpaceMount->driveSpace === null || ($ownDriveSpace !== null && $driveSpaceMount->driveSpace->id === $ownDriveSpace->id)) {
                 continue;
             }
+            $mountMode = $scratchDriveSpace !== null ? AgentDriveMount::MODE_READ_ONLY : $driveSpaceMount->mode;
+            // a space the agent's audience may not write (write-locked for it) is mounted read-only
+            if ($mountMode !== AgentDriveMount::MODE_READ_ONLY
+                && !$this->getDriveSpacesService()->isWriteAllowedForAudience($driveSpaceMount->driveSpace, $this->getDriveSpacesService()->getCurrentAudience())
+            ) {
+                $mountMode = AgentDriveMount::MODE_READ_ONLY;
+            }
             $agentDriveMount = $this->buildMount(
                 $driveSpaceMount->driveSpace,
                 $driveSpaceMount->mountName,
-                $scratchDriveSpace !== null ? AgentDriveMount::MODE_READ_ONLY : $driveSpaceMount->mode,
+                $mountMode,
                 $driveSpaceMount->audienceDescription
             );
             $agentDriveMounts->add($agentDriveMount);

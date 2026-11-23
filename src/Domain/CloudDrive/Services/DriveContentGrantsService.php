@@ -9,6 +9,7 @@ use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Content\DriveFileCard;
 use DDD\Domain\CloudDrive\Entities\Content\DriveFileCards;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
+use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
@@ -31,6 +32,8 @@ use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
  */
 class DriveContentGrantsService extends Service
 {
+    public const string SVG_CONTENT_TYPE = 'image/svg+xml';
+
     /** @var string[] Types never served inline (kept for callers; inline is decided by an allow-list now) */
     public const array NEVER_INLINE_CONTENT_TYPES = UntrustedContentHeaders::ACTIVE_CONTENT_TYPES;
 
@@ -44,12 +47,18 @@ class DriveContentGrantsService extends Service
      */
     public function createContentGrant(DriveNode $driveNode, string $purpose = DriveContentGrant::PURPOSE_DOWNLOAD, ?DriveFileVersion $driveFileVersion = null): DriveContentGrant
     {
-        if (!in_array($purpose, [DriveContentGrant::PURPOSE_DOWNLOAD, DriveContentGrant::PURPOSE_INLINE], true)) {
-            throw new BadRequestException('Content for people is granted for DOWNLOAD or INLINE.');
+        if (!in_array($purpose, DriveContentGrant::PEOPLE_PURPOSES, true)) {
+            throw new BadRequestException('Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.');
         }
-        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
+        $driveSpacesService = $this->getDriveSpacesService();
+        $driveSpacesService->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
         if (!$driveNode->isFile()) {
             throw new BadRequestException('Only a file has content.');
+        }
+        if (!$this->isVariantAllowed($driveNode, $purpose, $driveSpacesService->getCurrentAudience())) {
+            throw new ForbiddenException($driveNode->isTrashed()
+                ? 'The file is in the trash: only the staff can download it.'
+                : sprintf('The %s variant of this file is not available.', strtolower($purpose)));
         }
         $driveFileVersion ??= $driveNode->currentVersionId !== null ? $this->getDriveVersionsService()->find((int)$driveNode->currentVersionId, false) : null;
         if (!$driveFileVersion instanceof DriveFileVersion || $driveFileVersion->driveNodeId !== $driveNode->id) {
@@ -63,9 +72,75 @@ class DriveContentGrantsService extends Service
                 default => 'The version is not released yet (it waits for its scan).',
             });
         }
+        if ($purpose !== DriveContentGrant::PURPOSE_DOWNLOAD && UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === self::SVG_CONTENT_TYPE) {
+            $sanitizedSvgGrant = $this->createSanitizedSvgGrant($driveBlob, (string)$driveNode->name, $purpose);
+            if ($sanitizedSvgGrant !== null) {
+                $sanitizedSvgGrant->driveNodeId = (int)$driveNode->id;
+                $sanitizedSvgGrant->driveFileVersionId = (int)$driveFileVersion->id;
+                return $sanitizedSvgGrant;
+            }
+        }
         $asAttachment = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD
             || !UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
-        return $this->buildGrant($driveBlob, (string)$driveNode->name, $purpose, $asAttachment);
+        if ($purpose === DriveContentGrant::PURPOSE_THUMBNAIL && $asAttachment) {
+            throw new BadRequestException('Only a JPEG, PNG, GIF or WebP image has a thumbnail.');
+        }
+        $driveContentGrant = $this->buildGrant($driveBlob, (string)$driveNode->name, $purpose, $asAttachment);
+        $driveContentGrant->driveNodeId = (int)$driveNode->id;
+        $driveContentGrant->driveFileVersionId = (int)$driveFileVersion->id;
+        return $driveContentGrant;
+    }
+
+    /**
+     * Whether `$audience` may read the `$variant` (DOWNLOAD, INLINE, THUMBNAIL) of a file. Default: every variant of a
+     * live file; of a trashed file only the staff's download. Override in the application (same-path subclass) for
+     * other rules (e.g. originals of a kind only for the staff).
+     */
+    public function isVariantAllowed(DriveNode $driveNode, string $variant, string $audience): bool
+    {
+        if ($driveNode->isTrashed()) {
+            return $audience === DriveSpace::AUDIENCE_INTERNAL && $variant === DriveContentGrant::PURPOSE_DOWNLOAD;
+        }
+        return true;
+    }
+
+    /**
+     * The inline grant of an SVG's sanitised copy ({@see DriveSvgSanitizer}), made once per blob and kept next to it;
+     * null without a sanitiser or when the SVG cannot be made safe (it stays an attachment).
+     */
+    protected function createSanitizedSvgGrant(DriveBlob $driveBlob, string $fileName, string $purpose): ?DriveContentGrant
+    {
+        /** @var DriveSvgSanitizersService $driveSvgSanitizersService */
+        $driveSvgSanitizersService = DDDService::instance()->getService(DriveSvgSanitizersService::class);
+        if (!$driveSvgSanitizersService->hasSvgSanitizer() || (int)$driveBlob->sizeBytes > DriveSvgSanitizersService::MAX_SVG_BYTES) {
+            return null;
+        }
+        $driveBlobsService = $this->getDriveBlobsService();
+        $objectStorage = $driveBlobsService->getObjectStorage();
+        $sanitizedStorageKey = DriveBlobsService::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey);
+        if (!$objectStorage->objectExists($sanitizedStorageKey)) {
+            $svgBytes = $objectStorage->getObjectContent((string)$driveBlob->storageKey);
+            $sanitizedSvg = $svgBytes !== null ? $driveSvgSanitizersService->sanitizeSvg($svgBytes) : null;
+            if ($sanitizedSvg === null) {
+                return null;
+            }
+            $objectStorage->putObjectIfAbsent($sanitizedStorageKey, $sanitizedSvg, self::SVG_CONTENT_TYPE);
+        }
+        $lifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
+        $driveContentGrant = new DriveContentGrant();
+        $driveContentGrant->purpose = $purpose;
+        $driveContentGrant->url = $objectStorage->createTemporaryUrl(
+            $sanitizedStorageKey,
+            $lifetimeSeconds,
+            self::SVG_CONTENT_TYPE,
+            UntrustedContentHeaders::buildContentDisposition(true, $fileName)
+        );
+        $driveContentGrant->expiresAt = DateTime::fromTimestamp(time() + $lifetimeSeconds);
+        $driveContentGrant->fileName = $fileName;
+        $driveContentGrant->contentType = self::SVG_CONTENT_TYPE;
+        $driveContentGrant->sha256 = $driveBlob->sha256;
+        $driveContentGrant->isInline = true;
+        return $driveContentGrant;
     }
 
     /**
@@ -126,7 +201,7 @@ class DriveContentGrantsService extends Service
                     $driveFileCard->downloadUrl = $downloadGrant->url;
                     $driveFileCard->inlineUrl = $inlineGrant->url;
                     $driveFileCard->urlsExpireAt = $downloadGrant->expiresAt;
-                    if (UntrustedContentHeaders::isInlineContentType($inlineGrant->contentType)) {
+                    if ($inlineGrant->isInline) {
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {
@@ -149,6 +224,7 @@ class DriveContentGrantsService extends Service
         $driveContentGrant->sizeBytes = (int)$driveBlob->sizeBytes;
         $driveContentGrant->contentType = $driveBlob->contentType;
         $driveContentGrant->sha256 = $driveBlob->sha256;
+        $driveContentGrant->isInline = !$asAttachment && UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
         return $driveContentGrant;
     }
 

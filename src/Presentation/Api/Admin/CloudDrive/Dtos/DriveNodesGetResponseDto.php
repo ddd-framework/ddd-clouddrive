@@ -23,4 +23,8 @@ class DriveNodesGetResponseDto extends RestResponseDto
     /** @var string|null Pass it as `cursor` for the next page */
     #[Parameter(in: Parameter::RESPONSE, required: false)]
     public ?string $nextCursor = null;
+
+    /** @var int|null About how many entries the whole list has (from counters, for "about N"); null for a filtered list */
+    #[Parameter(in: Parameter::RESPONSE, required: false)]
+    public ?int $approximateTotalCount = null;
 }

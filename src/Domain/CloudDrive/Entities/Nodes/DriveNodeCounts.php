@@ -12,4 +12,7 @@ class DriveNodeCounts extends ValueObject
     public int $fileCount = 0;
 
     public int $folderCount = 0;
+
+    /** @var int[] The ids of a purge's nodes (for the lifecycle listeners) */
+    public array $driveNodeIds = [];
 }

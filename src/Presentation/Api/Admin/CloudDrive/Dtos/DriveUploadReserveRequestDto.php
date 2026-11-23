@@ -30,6 +30,10 @@ class DriveUploadReserveRequestDto extends RequestDto
     #[Parameter(in: Parameter::BODY, required: false)]
     public ?string $sha256 = null;
 
+    /** @var string|null The file's name: the space's type policy checks its extension before any byte is sent */
+    #[Parameter(in: Parameter::BODY, required: false)]
+    public ?string $fileName = null;
+
     /** @var string|null A retried reserve with the same key answers the same upload */
     #[Parameter(in: Parameter::BODY, required: false)]
     public ?string $idempotencyKey = null;

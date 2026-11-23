@@ -27,6 +27,9 @@ class CloudDriveTestContainer extends Container
                 }
             };
         }
+        if ($id === 'logger') {
+            return new Psr\Log\NullLogger();
+        }
         if (!isset($this->testInstances[$id])) {
             if (!class_exists($id)) {
                 return null;

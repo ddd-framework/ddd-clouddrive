@@ -19,19 +19,96 @@ use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Services\DDDService;
+use DDD\Symfony\Messenger\WorkerStateResetterInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 /**
  * Spaces: creation with their root folder, the rights check of one space, quota reservations and counters. Quota and
  * counters change with one atomic statement each, never through `update()`.
+ *
+ * The audience of the current caller ({@see getCurrentAudience()}): INTERNAL (the staff, the default) or SHARED (the
+ * people a shared space is shared with, e.g. partners). Every rights check for WRITE and MANAGE goes through
+ * {@see isRightAllowedForAudience()} on top of the host's space rights: a SHARED caller never manages, and writes only
+ * where {@see isWriteAllowedForAudience()} allows it (not while `isAudienceWriteLocked`). The controller trait sets the
+ * audience per request (`getDriveAudience()`), the agent tools per call; it is reset to INTERNAL between requests and
+ * Messenger jobs.
  *
  * @method DriveSpace|null find(int|string|null $entityId, bool $useEntityRegistrCache = true)
  * @method DriveSpaces findAll(?int $offset = null, $limit = null, bool $useEntityRegistrCache = true)
  * @method DBDriveSpace getEntityRepoClassInstance()
  * @method DBDriveSpaces getEntitySetRepoClassInstance()
  */
-class DriveSpacesService extends EntitiesService
+class DriveSpacesService extends EntitiesService implements WorkerStateResetterInterface, ResetInterface
 {
     public const DEFAULT_ENTITY_CLASS = DriveSpace::class;
+
+    /** @var string[] The audiences a caller acts as */
+    public const array AUDIENCES = [DriveSpace::AUDIENCE_INTERNAL, DriveSpace::AUDIENCE_SHARED];
+
+    /** @var string The audience of the current caller ({@see enableAudience()}) */
+    protected string $currentAudience = DriveSpace::AUDIENCE_INTERNAL;
+
+    /** The audience the current caller acts as: INTERNAL (staff) or SHARED */
+    public function getCurrentAudience(): string
+    {
+        return $this->currentAudience;
+    }
+
+    /**
+     * Makes the current caller act as `$audience` and answers the audience before (restore it with
+     * {@see restoreAudience()} in `finally`, or leave it for the rest of a request).
+     *
+     * @throws BadRequestException
+     */
+    public function enableAudience(string $audience): string
+    {
+        if (!in_array($audience, static::AUDIENCES, true)) {
+            throw new BadRequestException(sprintf('Unknown drive audience "%s"; one of %s.', $audience, implode(', ', static::AUDIENCES)));
+        }
+        $previousAudience = $this->currentAudience;
+        $this->currentAudience = $audience;
+        return $previousAudience;
+    }
+
+    public function restoreAudience(string $previousAudience): void
+    {
+        $this->currentAudience = in_array($previousAudience, static::AUDIENCES, true) ? $previousAudience : DriveSpace::AUDIENCE_INTERNAL;
+    }
+
+    /**
+     * Whether `$audience` may write in the space at all (the host's rights decide who of that audience may). Default:
+     * the staff always; the shared audience unless the space is write-locked for it. Override in the application
+     * (same-path subclass) for other rules (e.g. a write switch per partner).
+     */
+    public function isWriteAllowedForAudience(DriveSpace $driveSpace, string $audience): bool
+    {
+        if ($audience === DriveSpace::AUDIENCE_INTERNAL) {
+            return true;
+        }
+        return !(bool)$driveSpace->isAudienceWriteLocked;
+    }
+
+    /** Whether `$audience` may hold `$right` on the space: READ always, WRITE per {@see isWriteAllowedForAudience()}, MANAGE only the staff */
+    public function isRightAllowedForAudience(DriveSpace $driveSpace, string $right, string $audience): bool
+    {
+        return match ($right) {
+            DBDriveSpace::RIGHT_READ => true,
+            DBDriveSpace::RIGHT_WRITE => $this->isWriteAllowedForAudience($driveSpace, $audience),
+            default => $audience === DriveSpace::AUDIENCE_INTERNAL,
+        };
+    }
+
+    /** A Messenger job starts as the staff */
+    public function resetWorkerStateForNewJob(): void
+    {
+        $this->currentAudience = DriveSpace::AUDIENCE_INTERNAL;
+    }
+
+    /** A request of a long-running runtime starts as the staff (kernel.reset) */
+    public function reset(): void
+    {
+        $this->currentAudience = DriveSpace::AUDIENCE_INTERNAL;
+    }
 
     /**
      * Stores a new space (an instance of the application's class: `DriveSpace::newInstance()`) and its root folder.
@@ -107,7 +184,10 @@ class DriveSpacesService extends EntitiesService
             $driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($queryBuilder, $alias, $right);
         }
         $driveSpace = $driveSpaceRepo->find($queryBuilder, false);
-        return $driveSpace instanceof DriveSpace ? $driveSpace : null;
+        if (!$driveSpace instanceof DriveSpace) {
+            return null;
+        }
+        return $this->isRightAllowedForAudience($driveSpace, $right, $this->currentAudience) ? $driveSpace : null;
     }
 
     /** The throwaway space of an eval case's workspace key, null when there is none */
@@ -197,7 +277,22 @@ class DriveSpacesService extends EntitiesService
         $alias = $driveSpaceRepoClass::getBaseModelAlias();
         $queryBuilder->select("{$alias}.id")->andWhere("{$alias}.id IN (:driveSpaceIds)")->setParameter('driveSpaceIds', $driveSpaceIds);
         $driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($queryBuilder, $alias, $right);
-        return array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+        $allowedSpaceIds = array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
+        if ($right === DBDriveSpace::RIGHT_READ || $this->currentAudience === DriveSpace::AUDIENCE_INTERNAL || $allowedSpaceIds === []) {
+            return $allowedSpaceIds;
+        }
+        $driveSpaceSetRepo = $this->getEntitySetRepoClassInstance();
+        $spaceQueryBuilder = $driveSpaceSetRepo::createQueryBuilder(true);
+        $spaceAlias = $driveSpaceSetRepo::getBaseModelAlias();
+        $spaceQueryBuilder->andWhere("{$spaceAlias}.id IN (:driveSpaceIds)")->setParameter('driveSpaceIds', $allowedSpaceIds);
+        $driveSpaces = $driveSpaceSetRepo->find($spaceQueryBuilder, false);
+        $audienceSpaceIds = [];
+        foreach ($driveSpaces instanceof DriveSpaces ? $driveSpaces->getElements() : [] as $driveSpace) {
+            if ($this->isRightAllowedForAudience($driveSpace, $right, $this->currentAudience)) {
+                $audienceSpaceIds[] = (int)$driveSpace->id;
+            }
+        }
+        return $audienceSpaceIds;
     }
 
     /** The quota of a space and its counters (what counts: {@see DriveSpaceQuota}) */
