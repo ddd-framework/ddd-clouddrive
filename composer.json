@@ -1,0 +1,25 @@
+{
+    "name": "mgamadeus/ddd-clouddrive",
+    "description": "Cloud drive for mgamadeus/ddd: spaces with host-owned rights, versioned files in object storage, search, processing in a sandbox, and an optional agent mount for ddd-agents",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://github.com/ddd-framework/ddd-clouddrive",
+    "authors": [
+        {
+            "name": "Marius-Eugen Gerdan",
+            "email": "marius@gerdan.net"
+        }
+    ],
+    "require": {
+        "php": ">=8.3",
+        "mgamadeus/ddd": "^3.37.2"
+    },
+    "suggest": {
+        "mgamadeus/ddd-agents": "Mounts drive spaces into the agent workspace and adds the drive tools and widgets"
+    },
+    "autoload": {
+        "psr-4": {
+            "DDD\\": "src/"
+        }
+    }
+}
