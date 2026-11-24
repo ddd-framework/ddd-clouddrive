@@ -6,14 +6,17 @@ namespace DDD\Domain\CloudDrive\Services\AI;
 
 use DDD\Domain\AI\Entities\Conversations\Agent\AgentToolCallProvenance;
 use DDD\Domain\AI\Entities\Drives\AgentDriveFile;
+use DDD\Domain\AI\Entities\Drives\AgentDriveFileContent;
 use DDD\Domain\AI\Entities\Drives\AgentDriveFiles;
 use DDD\Domain\AI\Entities\Drives\AgentDriveListing;
 use DDD\Domain\AI\Entities\Drives\AgentDriveMount;
 use DDD\Domain\AI\Entities\Drives\AgentDriveMounts;
 use DDD\Domain\AI\Entities\Drives\AgentDrivePath;
 use DDD\Domain\AI\Entities\Drives\AgentDriveSaveResult;
+use DDD\Domain\AI\Services\Drives\AgentDriveFileContentReader;
 use DDD\Domain\AI\Services\Drives\AgentDriveStore;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
+use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
@@ -21,11 +24,13 @@ use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
+use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 use DDD\Domain\CloudDrive\Services\DriveWorkingCopiesService;
 use DDD\Infrastructure\Exceptions\BadRequestException;
+use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
@@ -36,7 +41,7 @@ use Throwable;
  * and the spaces {@see DriveSpaceMountResolverService} mounts. Paths of a mount are paths below its space's root;
  * references are `drive/<node id>`. Everything runs under the rights of the account the call acts for.
  */
-class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStore
+class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStore, AgentDriveFileContentReader
 {
     public const string STORE_NAME = 'clouddrive';
 
@@ -205,6 +210,52 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             }
         }
         return $agentDriveSaveResult;
+    }
+
+    /**
+     * The bytes of a file's released version for the agent's document tools: the same checks as a download of the
+     * caller (read right, trash rule, a released blob — never one waiting for or refused by its scan), the bytes read
+     * from the store by the backend, never through a URL. A file of the own drive the sandbox just wrote is committed
+     * first.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     */
+    public function readDriveFileContent(AgentToolCallProvenance $callProvenance, AgentDrivePath $agentDrivePath, int $maxBytes): AgentDriveFileContent
+    {
+        $agentDriveMount = $this->requireMount($agentDrivePath);
+        $driveSpace = $this->requireSpaceOfMount($agentDriveMount);
+        $this->commitUncommittedSource($callProvenance, $agentDriveMount, $driveSpace, $agentDrivePath);
+        $driveNode = $this->findNodeOfPath($driveSpace, $agentDrivePath);
+        if ($driveNode === null) {
+            throw new NotFoundException(sprintf('%s does not exist. Check the path with listDriveFiles.', $agentDrivePath->getWorkspacePath()));
+        }
+        $agentDriveMount = $this->requireMountOfNode($this->findMountsOfReference($callProvenance, $agentDrivePath), $agentDrivePath, $driveNode);
+        if (!$driveNode->isFile()) {
+            throw new NotFoundException(sprintf('%s is a folder; name a file in it (listDriveFiles shows them).', $agentDrivePath->getWorkspacePath()));
+        }
+        $driveContentDelivery = $this->getDriveContentGrantsService()->resolveContentDelivery($driveNode, DriveContentGrant::PURPOSE_DOWNLOAD);
+        $workspacePath = $agentDriveMount->getPathPrefix() . $this->getDriveNodesService()->buildPath($driveNode);
+        if ($driveContentDelivery->sizeBytes !== null && $driveContentDelivery->sizeBytes > $maxBytes) {
+            throw new BadRequestException(sprintf(
+                '%s has %d MB; the agent reads documents up to %d MB.',
+                $workspacePath,
+                (int)ceil($driveContentDelivery->sizeBytes / 1_048_576),
+                intdiv($maxBytes, 1_048_576)
+            ));
+        }
+        $contentBytes = $this->getDriveBlobsService()->getObjectStorage()->getObjectContent($driveContentDelivery->storageKey);
+        if ($contentBytes === null) {
+            throw new NotFoundException(sprintf('The stored content of %s is missing.', $workspacePath));
+        }
+        if (strlen($contentBytes) > $maxBytes) {
+            throw new BadRequestException(sprintf('%s is larger than the agent reads (%d MB).', $workspacePath, intdiv($maxBytes, 1_048_576)));
+        }
+        $agentDriveFileContent = AgentDriveFileContent::fromBytes($contentBytes, $driveContentDelivery->fileName, $driveContentDelivery->contentType);
+        $agentDriveFileContent->reference = $driveNode->buildReference();
+        $agentDriveFileContent->workspacePath = $workspacePath;
+        return $agentDriveFileContent;
     }
 
     public function findFileCards(array $references, ?int $widgetSelfHydrationKey): AgentDriveFiles
@@ -420,6 +471,13 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         /** @var DriveVersionsService $driveVersionsService */
         $driveVersionsService = DDDService::instance()->getService(DriveVersionsService::class);
         return $driveVersionsService;
+    }
+
+    protected function getDriveContentGrantsService(): DriveContentGrantsService
+    {
+        /** @var DriveContentGrantsService $driveContentGrantsService */
+        $driveContentGrantsService = DDDService::instance()->getService(DriveContentGrantsService::class);
+        return $driveContentGrantsService;
     }
 
     protected function getDriveBlobsService(): DriveBlobsService

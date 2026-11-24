@@ -62,7 +62,9 @@ folders and versioned files whose bytes live in object storage, working copies f
   (`findChangesSince()`). A conflict is never overwritten: it stays saved until it is resolved with mine, theirs or
   both. `DriveTextMergeService` merges text three-way with `git merge-file`.
 - **Agent part** (only with ddd-agents installed; classes in `Services\AI`, `Entities\AI`, `Repo\DB\AI`): the drive
-  store behind `agent.drive` (`CloudDriveAgentDriveStoreService`), the mount resolver a host overrides
+  store behind `agent.drive` (`CloudDriveAgentDriveStoreService`; also the content reader of the document tools
+  `readDriveDocument` / `viewDriveDocumentPages`: the released version's bytes read from the store by the backend
+  under the caller's download checks, never through a URL), the mount resolver a host overrides
   (`DriveSpaceMountResolverService`; by default one own drive per agent space, created on first use and linked in the
   table `AgentSpaceDriveSpaces`, owned by the agent space's account, `AgentOwnDriveSpaceRightsExtensionService`), the
   tool package `clouddrive.files` (`CloudDriveMCPPackage`: `driveStatus`, `commitDriveChanges`, `findDriveFiles`,

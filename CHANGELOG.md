@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3
+
+- The agent reads documents of the drive: `CloudDriveAgentDriveStoreService` implements ddd-agents'
+  `AgentDriveFileContentReader`, so `readDriveDocument` (text page by page: PDF, Word, Excel, PowerPoint,
+  OpenDocument, plain text) and `viewDriveDocumentPages` (PDF pages as images) of `agent.drive` work on every mount.
+  The bytes of the released version are read from the store by the backend under the caller's download checks (read
+  right, trash rule, scan state), never through a URL; a file over `AI.documents` `maxDocumentBytes` and a folder are
+  refused. A file of the own drive the sandbox just wrote is committed first.
+- The skill `CloudDrive.Files` names the two tools.
+- Requires ddd-agents 0.3.13 with the agent part (`conflict: <0.3.13`): the store implements its new interface.
+
 ## 0.3.2
 
 - Resume after a cancel or a reload: the web client reserves with an idempotency key of the file (space, folder, name,

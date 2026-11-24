@@ -1,10 +1,11 @@
 ---
-decisionCriteria: "Files: the own drive (the workspace), the library and other mounted spaces (also a file area shared with partners, a file or version named only by its number); find, read facts and history, commit, copy, organize, folders, trash, quota and write lock, rescan, take an image into the media library, show."
+decisionCriteria: "Files: the own drive (the workspace), the library and other mounted spaces (also a file area shared with partners, a file or version named only by its number); find, read facts and history, read a document's text (PDF, Word, Excel, PowerPoint) or look at its pages, commit, copy, organize, folders, trash, quota and write lock, rescan, take an image into the media library, show."
 shortDescription: "works with the drive: your files, the library and shared spaces"
 description: >-
   The cloud drive: the own drive is the workspace (shell, commit, conflicts), further spaces are
   mounted below drivespaces/ (the library, file areas shared with partners). Find files by name or tag, read their
-  facts, versions and history (who did what) without a download, a space's quota, use and write lock; copy files
+  facts, versions and history (who did what) without a download, read the text of a document (PDF, Word, Excel,
+  PowerPoint, OpenDocument, text) page by page and look at PDF pages as images, a space's quota, use and write lock; copy files
   between spaces, organize, create folders, trash and restore in mounted spaces, re-run a failed malware scan, set a
   space's write lock and quota, take an image into the media library, show files as cards and folders as links.
 providesWidgetTypes:
@@ -29,6 +30,13 @@ file to avoid a conflict.
 versions (version ids, scan state); `listDriveFiles` lists a folder (`drivespaces` lists the mounts). A file or folder
 named only by its number is `drive/<id>`. Who did what with it: `listDriveFileEvents`. A space's quota, use, write
 lock and top-level folders: `getDriveSpace` (`own` or the mount name).
+
+**Reading documents.** The text of a file of any mount (PDF, Word, Excel, PowerPoint, OpenDocument, plain text):
+`readDriveDocument` with the path or `drive/<id>`; it reads as many pages as fit and names the next one
+(`fromPage`); a sheet or slide is one page. Read only the pages the task needs. A chart, a table whose layout matters,
+a signature or a scan the text misses: `viewDriveDocumentPages` with the PDF page numbers (a few at a time; it costs
+far more than the text). A version still waiting for its scan, a legacy `.doc`/`.xls` or a file over the size limit is
+refused with the reason: tell the owner, do not try another way. In the own drive the shell reads files too.
 
 **Mounted spaces.** `saveDriveFile` copies files into a space (or from the library into the own drive) on the server.
 `organizeDriveFiles` moves, renames, tags and describes; `createDriveFolder` makes a folder; `trashDriveFiles` only on
