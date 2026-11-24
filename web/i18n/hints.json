@@ -1,0 +1,22 @@
+{
+  "A file with this name exists already in this folder.": "Drive screen (cloud drive of the admin): error after an upload: a file with the same name is already in the target folder.",
+  "Choose a space": "Drive screen: placeholder of the space picker button when no space is chosen (a space = one storage area of the drive).",
+  "Current versions": "Drive screen, tooltip of the storage pill: part of the used storage taken by the current version of each file.",
+  "Downloaded__file-event": "File manager details drawer, history: event type: someone downloaded the file.",
+  "Drive": "Drive screen (cloud drive of the admin): page title of the file storage screen.",
+  "No space matches.": "Drive screen, space picker: shown when the search finds no space.",
+  "Older versions": "Drive screen, tooltip of the storage pill: part of the used storage taken by older, kept versions of files.",
+  "Open the file again and retry.": "Drive screen: error when a new version of a file cannot be uploaded because the file's details are not loaded; the user should reopen the file.",
+  "Read by the agent": "File manager details drawer, history: event type: the AI agent read the file.",
+  "Search spaces…": "Drive screen, space picker: placeholder of the search field.",
+  "The drive answered without the file.": "Drive screen: error when the server confirmed an upload but returned no file.",
+  "The location could not be opened.": "Error under the path field when looking up the typed path failed for another reason than 'not found' (for example a network error).",
+  "The spaces could not be loaded.": "Drive screen: error message when the list of storage spaces failed to load.",
+  "There is no space you may read.": "Drive screen: empty state: the signed-in user may read no storage space.",
+  "This drive needs mgamadeus/ddd-clouddrive 0.1.0-rc.10 or newer on the server.": "Drive screen: shown to developers when the server's drive module is too old for this screen; keep the package name and version as they are.",
+  "Trash__drive-usage": "Drive screen, tooltip of the storage pill: part of the used storage taken by files in the trash.",
+  "Uploads being checked": "Drive screen, tooltip of the storage pill: part of the used storage taken by uploads still in the malware check.",
+  "Viewed__file-event": "File manager details drawer, history: event type: someone opened the file's preview.",
+  "You may read this space, but not change it.": "Notice above the drive's file list when the user may open and download files of this space but not upload, rename, move or delete.",
+  "{count, plural, one {# file} other {# files}}": "File manager (the admin's file area: folder tree, file list as grid or table, uploads, trash). ICU plural; # is the number."
+}

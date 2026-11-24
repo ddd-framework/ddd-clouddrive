@@ -30,7 +30,8 @@ applies its schema diff): `DriveActivityEventsService` checks the table once per
 
 Every file in a drive, every name, type and size a client sends, and every byte an agent sandbox writes is foreign. It
 is never executed or interpreted as code on the server: scans and merges run as `IsolatedProcess`, image types come
-from `RasterImageDecoder`, downloads go through `UntrustedContentHeaders` (inline only for JPEG, PNG, GIF, WebP). Any
+from `RasterImageDecoder`, downloads go through `UntrustedContentHeaders` as presigned URLs of the object store, never the application's
+origin (inline only for JPEG, PNG, GIF, WebP, PDF and plain texts as `text/plain`, `DriveContentGrantsService::resolveInlineContentType()`). Any
 other raw sink call needs an entry with its reason in `config/untrusted-sinks-allowlist.php`;
 `tests/UntrustedSinkScanTest.php` enforces it. Rule, helpers and traps: the Core skill
 **`ddd-untrusted-input-specialist`** — load it before touching uploads, downloads, the scanner or a converter.

@@ -1,0 +1,170 @@
+{
+  "package": "@mgamadeus/ddd-clouddrive",
+  "version": "0.1.1",
+  "generatedBy": "scripts/build-i18n-manifest.mjs",
+  "keys": [
+    {
+      "key": "A file with this name exists already in this folder.",
+      "text": "A file with this name exists already in this folder.",
+      "files": [
+        "screen/driveFileActions.ts"
+      ],
+      "hint": "Drive screen (cloud drive of the admin): error after an upload: a file with the same name is already in the target folder."
+    },
+    {
+      "key": "Choose a space",
+      "text": "Choose a space",
+      "files": [
+        "screen/CloudDriveSpacePicker.tsx"
+      ],
+      "hint": "Drive screen: placeholder of the space picker button when no space is chosen (a space = one storage area of the drive)."
+    },
+    {
+      "key": "Current versions",
+      "text": "Current versions",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "Drive screen, tooltip of the storage pill: part of the used storage taken by the current version of each file."
+    },
+    {
+      "key": "Downloaded__file-event",
+      "text": "Downloaded",
+      "context": "file-event",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "File manager details drawer, history: event type: someone downloaded the file."
+    },
+    {
+      "key": "Drive",
+      "text": "Drive",
+      "files": [
+        "screen/CloudDriveScreen.tsx"
+      ],
+      "hint": "Drive screen (cloud drive of the admin): page title of the file storage screen."
+    },
+    {
+      "key": "No space matches.",
+      "text": "No space matches.",
+      "files": [
+        "screen/CloudDriveSpacePicker.tsx"
+      ],
+      "hint": "Drive screen, space picker: shown when the search finds no space."
+    },
+    {
+      "key": "Older versions",
+      "text": "Older versions",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "Drive screen, tooltip of the storage pill: part of the used storage taken by older, kept versions of files."
+    },
+    {
+      "key": "Open the file again and retry.",
+      "text": "Open the file again and retry.",
+      "files": [
+        "screen/driveFileActions.ts"
+      ],
+      "hint": "Drive screen: error when a new version of a file cannot be uploaded because the file's details are not loaded; the user should reopen the file."
+    },
+    {
+      "key": "Read by the agent",
+      "text": "Read by the agent",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "File manager details drawer, history: event type: the AI agent read the file."
+    },
+    {
+      "key": "Search spaces…",
+      "text": "Search spaces…",
+      "files": [
+        "screen/CloudDriveSpacePicker.tsx"
+      ],
+      "hint": "Drive screen, space picker: placeholder of the search field."
+    },
+    {
+      "key": "The drive answered without the file.",
+      "text": "The drive answered without the file.",
+      "files": [
+        "screen/driveFileActions.ts"
+      ],
+      "hint": "Drive screen: error when the server confirmed an upload but returned no file."
+    },
+    {
+      "key": "The location could not be opened.",
+      "text": "The location could not be opened.",
+      "files": [
+        "screen/useCloudDriveFileAdapter.ts"
+      ],
+      "hint": "Error under the path field when looking up the typed path failed for another reason than 'not found' (for example a network error)."
+    },
+    {
+      "key": "The spaces could not be loaded.",
+      "text": "The spaces could not be loaded.",
+      "files": [
+        "screen/CloudDriveScreen.tsx"
+      ],
+      "hint": "Drive screen: error message when the list of storage spaces failed to load."
+    },
+    {
+      "key": "There is no space you may read.",
+      "text": "There is no space you may read.",
+      "files": [
+        "screen/CloudDriveScreen.tsx"
+      ],
+      "hint": "Drive screen: empty state: the signed-in user may read no storage space."
+    },
+    {
+      "key": "This drive needs mgamadeus/ddd-clouddrive 0.1.0-rc.10 or newer on the server.",
+      "text": "This drive needs mgamadeus/ddd-clouddrive 0.1.0-rc.10 or newer on the server.",
+      "files": [
+        "screen/CloudDriveScreen.tsx"
+      ],
+      "hint": "Drive screen: shown to developers when the server's drive module is too old for this screen; keep the package name and version as they are."
+    },
+    {
+      "key": "Trash__drive-usage",
+      "text": "Trash",
+      "context": "drive-usage",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "Drive screen, tooltip of the storage pill: part of the used storage taken by files in the trash."
+    },
+    {
+      "key": "Uploads being checked",
+      "text": "Uploads being checked",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "Drive screen, tooltip of the storage pill: part of the used storage taken by uploads still in the malware check."
+    },
+    {
+      "key": "Viewed__file-event",
+      "text": "Viewed",
+      "context": "file-event",
+      "files": [
+        "screen/driveFileMapping.ts"
+      ],
+      "hint": "File manager details drawer, history: event type: someone opened the file's preview."
+    },
+    {
+      "key": "You may read this space, but not change it.",
+      "text": "You may read this space, but not change it.",
+      "files": [
+        "screen/CloudDriveScreen.tsx"
+      ],
+      "hint": "Notice above the drive's file list when the user may open and download files of this space but not upload, rename, move or delete."
+    },
+    {
+      "key": "{count, plural, one {# file} other {# files}}",
+      "text": "{count, plural, one {# file} other {# files}}",
+      "files": [
+        "screen/CloudDriveSpacePicker.tsx"
+      ],
+      "hint": "File manager (the admin's file area: folder tree, file list as grid or table, uploads, trash). ICU plural; # is the number."
+    }
+  ]
+}

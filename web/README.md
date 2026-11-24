@@ -55,6 +55,13 @@ The cards are read through `POST {apiPrefix}/cards` under the viewer's rights; o
 short-lived URLs (read again when they expired) or `GET {apiPrefix}/nodes/{id}/content`. A card's `adminLink`
 (`CloudDrive.settings.adminLinkTemplate` on the server) becomes its link into the drive screen.
 
+## Texts
+
+Every text of the drive screen goes through `@mgamadeus/ddd-admin-ui/i18n` (`t()`, `m()`, `translateText()`). The
+package ships its text manifest `@mgamadeus/ddd-clouddrive/i18n-keys.json` (keys, contexts, translator hints, the
+files that use them; the format of `@mgamadeus/ddd-admin-ui/i18n-keys.json`): a host's text export merges it next to
+admin-ui's. The package ships no translations; the host adds them to its translation store.
+
 ## Development
 
 ```bash

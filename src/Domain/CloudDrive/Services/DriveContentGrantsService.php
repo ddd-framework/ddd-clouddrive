@@ -25,8 +25,14 @@ use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
 
 /**
  * The one gate for file content: a short-lived URL per version and purpose, under the reader's rights. People read
- * only released content (DOWNLOAD as attachment, INLINE for a preview of JPEG, PNG, GIF or WebP only — the type comes
- * from the bytes at ingest; anything else is an attachment even when INLINE is asked). A working copy
+ * only released content: DOWNLOAD as attachment; INLINE for JPEG, PNG, GIF, WebP and PDF in their own type and for
+ * plain texts (Markdown, CSV, JSON, …) as `text/plain; charset=utf-8` — the type comes from the bytes at ingest;
+ * anything else (HTML, SVG, XML, JavaScript, Office, archives) is an attachment even when INLINE is asked
+ * ({@see resolveInlineContentType()}). Inline content is served by a presigned URL of the object store, a different
+ * origin than the application: a PDF viewer or a text page there reaches no cookie or session of the application,
+ * which is why a PDF may open in the browser while HTML or SVG never does (both would run in that origin and could
+ * still phish or exfiltrate through it). The store's endpoint must therefore never share the application's origin.
+ * A working copy
  * gets its own unreleased content back (WORKSPACE_RESTORE): staged blobs of its entries and pending versions of its
  * space, never downloadable by people.
  */
@@ -36,6 +42,27 @@ class DriveContentGrantsService extends Service
 
     /** @var string[] Types never served inline (kept for callers; inline is decided by an allow-list now) */
     public const array NEVER_INLINE_CONTENT_TYPES = UntrustedContentHeaders::ACTIVE_CONTENT_TYPES;
+
+    public const string PDF_CONTENT_TYPE = 'application/pdf';
+
+    /** The type a text is served inline as: never its own (a `text/markdown` or `text/csv` some browsers would download or render) */
+    public const string TEXT_INLINE_CONTENT_TYPE = 'text/plain; charset=utf-8';
+
+    /** @var string[] Plain texts a reader may open inline, served as {@see TEXT_INLINE_CONTENT_TYPE} */
+    public const array TEXT_INLINE_SOURCE_CONTENT_TYPES = [
+        'text/plain',
+        'text/markdown',
+        'text/x-markdown',
+        'text/csv',
+        'text/tab-separated-values',
+        'text/x-log',
+        'text/yaml',
+        'text/x-yaml',
+        'application/yaml',
+        'application/x-yaml',
+        'application/json',
+        'application/x-ndjson',
+    ];
 
     /**
      * The content URL of a file's released version (the current one when no version is given).
@@ -82,15 +109,38 @@ class DriveContentGrantsService extends Service
                 return $sanitizedSvgGrant;
             }
         }
-        $asAttachment = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD
-            || !UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
-        if ($purpose === DriveContentGrant::PURPOSE_THUMBNAIL && $asAttachment) {
+        $isRasterImage = UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
+        if ($purpose === DriveContentGrant::PURPOSE_THUMBNAIL && !$isRasterImage) {
             throw new BadRequestException('Only a JPEG, PNG, GIF or WebP image has a thumbnail.');
         }
+        $asAttachment = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD
+            || $this->resolveInlineContentType($driveBlob->contentType) === null;
         $driveContentGrant = $this->buildGrant($driveBlob, (string)$driveNode->name, $purpose, $asAttachment);
         $driveContentGrant->driveNodeId = (int)$driveNode->id;
         $driveContentGrant->driveFileVersionId = (int)$driveFileVersion->id;
         return $driveContentGrant;
+    }
+
+    /**
+     * The type a released blob of `$contentType` is served inline as, or null when it is only ever an attachment:
+     * JPEG, PNG, GIF, WebP and PDF in their own type, the plain texts of {@see TEXT_INLINE_SOURCE_CONTENT_TYPES} as
+     * `text/plain; charset=utf-8`. HTML, SVG (only through its sanitised copy), XML, JavaScript and every other type:
+     * null. Override in the application (same-path subclass) to narrow the list; widening it to a type a browser runs
+     * defeats the untrusted-content rule.
+     */
+    public function resolveInlineContentType(?string $contentType): ?string
+    {
+        $normalizedContentType = UntrustedContentHeaders::normalizeContentType($contentType);
+        if (UntrustedContentHeaders::isInlineContentType($normalizedContentType)) {
+            return $normalizedContentType;
+        }
+        if ($normalizedContentType === self::PDF_CONTENT_TYPE) {
+            return self::PDF_CONTENT_TYPE;
+        }
+        if (in_array($normalizedContentType, self::TEXT_INLINE_SOURCE_CONTENT_TYPES, true)) {
+            return self::TEXT_INLINE_CONTENT_TYPE;
+        }
+        return null;
     }
 
     /**
@@ -204,7 +254,7 @@ class DriveContentGrantsService extends Service
                     $driveFileCard->downloadUrl = $downloadGrant->url;
                     $driveFileCard->inlineUrl = $inlineGrant->url;
                     $driveFileCard->urlsExpireAt = $downloadGrant->expiresAt;
-                    if ($inlineGrant->isInline) {
+                    if ($inlineGrant->isInline && UntrustedContentHeaders::isInlineContentType($driveNode->contentType)) {
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {
@@ -221,13 +271,14 @@ class DriveContentGrantsService extends Service
         $lifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
         $driveContentGrant = new DriveContentGrant();
         $driveContentGrant->purpose = $purpose;
-        $driveContentGrant->url = $this->getDriveBlobsService()->createDownloadRequestUrl($driveBlob, $fileName, $asAttachment, $lifetimeSeconds);
+        $inlineContentType = $asAttachment ? null : $this->resolveInlineContentType($driveBlob->contentType);
+        $driveContentGrant->url = $this->getDriveBlobsService()->createDownloadRequestUrl($driveBlob, $fileName, $asAttachment, $lifetimeSeconds, $inlineContentType);
         $driveContentGrant->expiresAt = DateTime::fromTimestamp(time() + $lifetimeSeconds);
         $driveContentGrant->fileName = $fileName;
         $driveContentGrant->sizeBytes = (int)$driveBlob->sizeBytes;
         $driveContentGrant->contentType = $driveBlob->contentType;
         $driveContentGrant->sha256 = $driveBlob->sha256;
-        $driveContentGrant->isInline = !$asAttachment && UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
+        $driveContentGrant->isInline = $inlineContentType !== null;
         return $driveContentGrant;
     }
 

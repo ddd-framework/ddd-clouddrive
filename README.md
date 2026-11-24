@@ -42,8 +42,12 @@ folders and versioned files whose bytes live in object storage, working copies f
   blob, `If-None-Match: *` signed into each PUT, multipart uploads completed only by the server onto a free key,
   `Content-MD5` verified by the store. The ingest computes the SHA-256, takes the content type from the bytes, scans,
   deduplicates per space and releases or blocks. People read only released content (`DriveContentGrantsService`):
-  inline only for JPEG, PNG, GIF and WebP, everything else as an attachment (HTML, SVG, XML, JavaScript as
-  `application/octet-stream`).
+  inline only for JPEG, PNG, GIF, WebP and PDF in their own type and for plain texts (Markdown, CSV, JSON, …) as
+  `text/plain; charset=utf-8`; everything else as an attachment (HTML, SVG, XML, JavaScript as
+  `application/octet-stream`). Content is served by presigned URLs of the object store, a different origin than the
+  application, so a PDF opened there reaches no cookie or session of the application; the store's endpoint must
+  never share the application's origin. `resolveInlineContentType()` is the one rule (a host narrows it in a
+  same-path subclass).
 - **Working copies** (`DriveWorkingCopiesService`): a sandbox saves changes (`stageChanges()`), commits them with a
   compare and swap on each file's newest version (`commitChanges()`), pulls what others changed
   (`findChangesSince()`). A conflict is never overwritten: it stays saved until it is resolved with mine, theirs or

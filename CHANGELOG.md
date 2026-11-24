@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+- Content: "open" works for PDF and plain texts. The INLINE purpose serves JPEG, PNG, GIF, WebP and PDF in their own
+  type and plain texts (Markdown, CSV, JSON, YAML, plain text) as `text/plain; charset=utf-8`, inline; HTML, SVG (only
+  through its sanitised copy), XML, JavaScript, Office files and archives stay attachments
+  (`DriveContentGrantsService::resolveInlineContentType()`, overridable). Content is served from the object store's
+  origin by presigned URLs, never from the application's, so an opened PDF reaches no application session; the store
+  endpoint must not share the application's origin. A file card's `thumbnailUrl` stays raster-only. An office file's
+  PDF twin now opens in the browser.
+- npm package: ships its text manifest `i18n-keys.json` (export `@mgamadeus/ddd-clouddrive/i18n-keys.json`, the
+  format of `@mgamadeus/ddd-admin-ui`'s manifest, translator hints in `i18n/hints.json`, checked in CI with
+  `pnpm i18n:check`) for the drive screen's 20 texts, so a host's text export picks them up.
+
 ## 0.1.0
 
 - First regular release (no more release candidates): Composer and npm `@mgamadeus/ddd-clouddrive` in lockstep, npm

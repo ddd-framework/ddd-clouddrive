@@ -523,12 +523,18 @@ class DriveBlobsService extends EntitiesService
 
     /**
      * A presigned GET of a blob; the purpose was checked by {@see DriveContentGrantsService}. Inline only for the raster
-     * allow-list (JPEG, PNG, GIF, WebP); everything else is an attachment, and a type a browser would run (HTML, SVG,
-     * XML, JavaScript) is served as `application/octet-stream`.
+     * allow-list (JPEG, PNG, GIF, WebP) or for the inline type the grant service chose (`$inlineContentType`: a PDF, or
+     * a text served as `text/plain; charset=utf-8`); everything else is an attachment, and a type a browser would run
+     * (HTML, SVG, XML, JavaScript) is served as `application/octet-stream`. The URL points at the object store's
+     * origin, never at the application's, so an inline document there reaches no session of the application.
      */
-    public function createDownloadRequestUrl(DriveBlob $driveBlob, string $fileName, bool $asAttachment, int $lifetimeSeconds): string
+    public function createDownloadRequestUrl(DriveBlob $driveBlob, string $fileName, bool $asAttachment, int $lifetimeSeconds, ?string $inlineContentType = null): string
     {
         $contentType = UntrustedContentHeaders::normalizeContentType($driveBlob->contentType);
+        if (!$asAttachment && $inlineContentType !== null) {
+            $disposition = UntrustedContentHeaders::buildContentDisposition(true, $fileName);
+            return $this->getObjectStorage()->createTemporaryUrl((string)$driveBlob->storageKey, $lifetimeSeconds, $inlineContentType, $disposition);
+        }
         $isInline = !$asAttachment && UntrustedContentHeaders::isInlineContentType($contentType);
         if (!$isInline && ($contentType === '' || in_array($contentType, UntrustedContentHeaders::ACTIVE_CONTENT_TYPES, true))) {
             $contentType = UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;

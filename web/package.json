@@ -1,6 +1,6 @@
 {
   "name": "@mgamadeus/ddd-clouddrive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React frontend of the cloud drive for backends built with mgamadeus/ddd (Composer package mgamadeus/ddd-clouddrive): the RTK Query client of the drive routes, the drive screen on the file manager of @mgamadeus/ddd-admin-ui (spaces, folders, upload, versions, trash, activity, URL state) and the source of the DriveFiles cards of @mgamadeus/ddd-agents.",
   "keywords": [
     "ddd",
@@ -36,6 +36,7 @@
       "types": "./dist/agents/index.d.ts",
       "import": "./dist/agents/index.js"
     },
+    "./i18n-keys.json": "./dist/i18n-keys.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -44,10 +45,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node scripts/clean.mjs && tsup && node scripts/check-package.mjs .",
+    "build": "node scripts/clean.mjs && tsup && node scripts/copy-i18n-manifest.mjs && node scripts/check-package.mjs .",
     "typecheck": "tsc -p .",
     "test": "node --experimental-strip-types --no-warnings --test \"src/**/*.test.ts\"",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "i18n:manifest": "node scripts/build-i18n-manifest.mjs",
+    "i18n:check": "node scripts/build-i18n-manifest.mjs --check"
   },
   "engines": {
     "node": ">=20"
