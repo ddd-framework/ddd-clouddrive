@@ -1,5 +1,7 @@
 {
   "A file with this name exists already in this folder.": "Drive screen (cloud drive of the admin): error after an upload: a file with the same name is already in the target folder.",
+  "Being checked__drive-card-state": "Agent chat, file card of the drive: state line of a file whose malware check is still running (not yet downloadable).",
+  "Blocked__drive-card-state": "Agent chat, file card of the drive: state line of a file the malware check blocked (cannot be opened or downloaded).",
   "Choose a space": "Drive screen: placeholder of the space picker button when no space is chosen (a space = one storage area of the drive).",
   "Current versions": "Drive screen, tooltip of the storage pill: part of the used storage taken by the current version of each file.",
   "Downloaded__file-event": "File manager details drawer, history: event type: someone downloaded the file.",
@@ -17,6 +19,7 @@
   "Trash__drive-usage": "Drive screen, tooltip of the storage pill: part of the used storage taken by files in the trash.",
   "Uploads being checked": "Drive screen, tooltip of the storage pill: part of the used storage taken by uploads still in the malware check.",
   "Viewed__file-event": "File manager details drawer, history: event type: someone opened the file's preview.",
+  "Written by a third party__drive-card-state": "Agent chat, file card of the drive: state line of a file whose content came from outside (e.g. a mail attachment or a web page), not from the owner.",
   "You may read this space, but not change it.": "Notice above the drive's file list when the user may open and download files of this space but not upload, rename, move or delete.",
   "{count, plural, one {# file} other {# files}}": "File manager (the admin's file area: folder tree, file list as grid or table, uploads, trash). ICU plural; # is the number."
 }

@@ -222,6 +222,33 @@ class DriveBackendTransferTest extends TestCase
         self::assertSame(str_repeat('c', 3), $objectStorage->getObjectContentRange('1/2026/800-test', $partBytes, 3), 'the resent part replaced the first');
     }
 
+    public function testAReserveWithAKnownKeyResumesOnlyAUsableBlobOfTheSameSize(): void
+    {
+        $driveBlob = (new ReflectionClass(DriveBlob::class))->newInstanceWithoutConstructor();
+        $driveBlob->sizeBytes = 5000;
+        $driveBlob->state = DriveBlob::STATE_UPLOADING;
+        $driveBlob->expiresAt = \DDD\Infrastructure\Base\DateTime\DateTime::fromTimestamp(time() + 3600);
+        self::assertTrue($this->driveBlobsService->isBlobResumable($driveBlob, 5000), 'an open upload is resumed');
+        self::assertFalse($this->driveBlobsService->isBlobResumable($driveBlob, 5001), 'another size is another file');
+        $driveBlob->expiresAt = \DDD\Infrastructure\Base\DateTime\DateTime::fromTimestamp(time() - 10);
+        self::assertFalse($this->driveBlobsService->isBlobResumable($driveBlob, 5000), 'an expired upload may have lost its parts');
+        foreach ([DriveBlob::STATE_FAILED, DriveBlob::STATE_SCAN_FAILED, DriveBlob::STATE_PURGING] as $deadState) {
+            $driveBlob->state = $deadState;
+            self::assertFalse($this->driveBlobsService->isBlobResumable($driveBlob, 5000), $deadState . ' starts a new blob');
+        }
+        $driveBlob->state = DriveBlob::STATE_RELEASED;
+        self::assertTrue($this->driveBlobsService->isBlobResumable($driveBlob, 5000), 'a finished upload needs no bytes again');
+    }
+
+    public function testTheApiSchemaOfAReservationLeavesOutTheRunnersPresignedRequests(): void
+    {
+        $reflectionClass = new ReflectionClass(\DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadReservation::class);
+        foreach (['uploadRequest', 'partRequests'] as $propertyName) {
+            self::assertNotEmpty($reflectionClass->getProperty($propertyName)->getAttributes(\DDD\Presentation\Base\OpenApi\Attributes\Ignore::class), $propertyName . ' is no part of the client schema');
+        }
+        self::assertEmpty($reflectionClass->getProperty('uploadedPartNumbers')->getAttributes(\DDD\Presentation\Base\OpenApi\Attributes\Ignore::class));
+    }
+
     public function testASinglePartUploadIsCheckedAgainstItsMd5(): void
     {
         $driveBlob = (new ReflectionClass(DriveBlob::class))->newInstanceWithoutConstructor();

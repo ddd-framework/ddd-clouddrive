@@ -1,7 +1,7 @@
 'use client';
 
 // The file manager of `./files` on the drive's endpoints (`createCloudDriveApi`, mgamadeus/ddd-clouddrive ≥ 0.1.0-rc.10).
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { translateText } from '@mgamadeus/ddd-admin-ui/i18n';
 
@@ -18,7 +18,9 @@ import type {
   FileTrashQuery,
 } from '@mgamadeus/ddd-admin-ui/files';
 import type { FileAreaKey, FileAreaView, FileDetailView, FileEventView, FileItemId, FolderView } from '@mgamadeus/ddd-admin-ui/files';
+import { isFileBeingChecked } from '@mgamadeus/ddd-admin-ui/files';
 import type { CloudDriveApi } from '../api.ts';
+import { driveListPollingIntervalOf } from './driveListPolling.ts';
 import { buildCloudDriveFileActions, type CloudDriveFileActionTriggers, type DriveNodeFact, rememberDriveNodes } from './driveFileActions.ts';
 import {
   DRIVE_LIST_PAGE_SIZE,
@@ -117,15 +119,27 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
     const [limit, setLimit] = useGrowingLimit(JSON.stringify(query));
     const rootNodeId = space.item?.rootNodeId;
     const skip = query === null || space.item === undefined;
+    // files being checked: the list asks again with a growing interval until their scan is done (a new query restarts it)
+    const queryKey = JSON.stringify(query);
+    const [checking, setChecking] = useState<{ queryKey: string; sinceMs: number } | null>(null);
+    const checkingSinceMs = checking !== null && checking.queryKey === queryKey ? checking.sinceMs : null;
     const childrenQuery = api.useDriveChildrenQuery(
       query && !skip ? driveChildrenArgOf(query, rootNodeId, limit) : { driveSpaceId: 0 },
-      { skip }
+      { skip, pollingInterval: skip ? 0 : driveListPollingIntervalOf(checkingSinceMs, Date.now()) }
     );
     const items = useMemo(() => {
       const fileItems = driveFileItemsOf(childrenQuery.data?.items?.elements);
       rememberNodes(fileItems);
       return fileItems.map(item => driveFileViewOf(item, rootNodeId));
     }, [childrenQuery.data, rootNodeId]);
+    const hasFileBeingChecked = !skip && items.some(isFileBeingChecked);
+    useEffect(() => {
+      if (!hasFileBeingChecked) {
+        setChecking(previous => (previous === null ? previous : null));
+        return;
+      }
+      setChecking(previous => (previous !== null && previous.queryKey === queryKey ? previous : { queryKey, sinceMs: Date.now() }));
+    }, [hasFileBeingChecked, queryKey]);
     const nextLimit = nextDriveListLimit(limit);
     const hasMore = Boolean(childrenQuery.data?.nextCursor) && nextLimit !== null;
     if (skip) return EMPTY_LIST;

@@ -104,3 +104,31 @@ export const parseDriveTime = (value: string | null | undefined): Date | null =>
   const date = new Date(/(Z|[+-]\d{2}:?\d{2})$/.test(isoValue) ? isoValue : `${isoValue}Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 };
+
+/** The identity of one upload of a file into one folder: the same file sent again (after a cancel or a reload) gets the same key. */
+export interface DriveUploadIdentity {
+  driveSpaceId: number;
+  folderNodeId: number | null;
+  name: string;
+  sizeBytes: number;
+  lastModified: number;
+}
+
+/** 32-bit FNV-1a of a string, as 8 hex digits (`seed` varies the offset basis for a second, independent hash). */
+const fnv1aHexOf = (text: string, seed: number): string => {
+  let hash = (0x811c9dc5 ^ seed) >>> 0;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+};
+
+/**
+ * The idempotency key of a reservation: the drive answers a reserve with a known key with the open upload (its
+ * `uploadedPartNumbers`), so a resumed upload sends only the missing parts. At most 128 characters, whatever the name.
+ */
+export const driveUploadIdempotencyKeyOf = (identity: DriveUploadIdentity): string => {
+  const identityText = JSON.stringify([identity.driveSpaceId, identity.folderNodeId, identity.name, identity.sizeBytes, identity.lastModified]);
+  return `web1-${identity.sizeBytes}-${identity.lastModified}-${fnv1aHexOf(identityText, 0)}${fnv1aHexOf(identityText, 0x5bd1e995)}`;
+};

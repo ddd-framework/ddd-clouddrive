@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { formatDriveSize, parseDriveTime, sendDriveUpload } from './upload.ts';
+import { driveUploadIdempotencyKeyOf, formatDriveSize, parseDriveTime, sendDriveUpload } from './upload.ts';
 
 describe('clouddrive upload helpers', () => {
   it('reads an offsetless backend time as UTC and keeps an offset', () => {
@@ -62,5 +62,16 @@ describe('clouddrive upload to the backend', () => {
       putPart: async () => { throw Object.assign(new Error('Bad Request'), { status: 400 }); },
     };
     await assert.rejects(sendDriveUpload({ driveBlobId: 7, sizeBytes: 4, isMultipart: true, partSizeBytes: 4, partCount: 1 }, new Blob(['0123']), sender));
+  });
+
+  it('keys one file into one folder stably, at most 128 characters', () => {
+    const identity = { driveSpaceId: 7, folderNodeId: 12, name: 'Report.pdf', sizeBytes: 50_000_000, lastModified: 1_763_900_000_000 };
+    const key = driveUploadIdempotencyKeyOf(identity);
+    assert.equal(driveUploadIdempotencyKeyOf({ ...identity }), key);
+    assert.notEqual(driveUploadIdempotencyKeyOf({ ...identity, folderNodeId: null }), key);
+    assert.notEqual(driveUploadIdempotencyKeyOf({ ...identity, name: 'Report (2).pdf' }), key);
+    assert.notEqual(driveUploadIdempotencyKeyOf({ ...identity, lastModified: identity.lastModified + 1 }), key);
+    assert.notEqual(driveUploadIdempotencyKeyOf({ ...identity, driveSpaceId: 8 }), key);
+    assert.ok(driveUploadIdempotencyKeyOf({ ...identity, name: 'x'.repeat(1000) }).length <= 128);
   });
 });

@@ -7,7 +7,7 @@ import type { UploadProgressCallbacks } from '@mgamadeus/ddd-admin-ui/files';
 import type { CloudDriveApi } from '../api.ts';
 import { driveFileViewOf, driveFolderIdOf, emptyDriveTrashFully } from './driveFileMapping.ts';
 import type { DriveContentPurpose, DriveNodeListItem, DriveNodeResponse } from '../types.ts';
-import { sendDriveUpload, type DriveUploadSender } from './upload.ts';
+import { driveUploadIdempotencyKeyOf, sendDriveUpload, type DriveUploadSender } from './upload.ts';
 
 type TriggerOf<THook> = THook extends () => readonly [infer TTrigger, unknown] ? TTrigger : never;
 
@@ -108,7 +108,14 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     callbacks: UploadProgressCallbacks,
     options: { comment?: string | null; replaceExisting?: boolean }
   ): Promise<FileView> => {
-    const { reservation } = await reserveUpload({ driveSpaceId, sizeBytes: file.size, contentType: file.type || null }).unwrap();
+    // the file's name lets the space refuse a type before any byte is sent; the key resumes an upload cut off before
+    const { reservation } = await reserveUpload({
+      driveSpaceId,
+      sizeBytes: file.size,
+      contentType: file.type || null,
+      fileName: file.name,
+      idempotencyKey: driveUploadIdempotencyKeyOf({ driveSpaceId, folderNodeId, name: file.name, sizeBytes: file.size, lastModified: file.lastModified }),
+    }).unwrap();
     await sendDriveUpload(reservation, file, driveUploadSender, (sent, total) => callbacks.onProgress?.(sent, total), callbacks.signal);
     const response = await completeUpload({
       driveBlobId: reservation.driveBlobId,
@@ -126,7 +133,7 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     uploadVersion: async (fileId, file, callbacks) => {
       const fact = nodeFacts.get(Number(fileId));
       if (!fact) throw new Error(translateText('Open the file again and retry.'));
-      return uploadInto(spaceId, fact.parentNodeId, new File([file], fact.name, { type: file.type }), callbacks, { replaceExisting: true });
+      return uploadInto(spaceId, fact.parentNodeId, new File([file], fact.name, { type: file.type, lastModified: file.lastModified }), callbacks, { replaceExisting: true });
     },
     getDownload: async (fileId, options) => {
       const { grant } = await requestContent({

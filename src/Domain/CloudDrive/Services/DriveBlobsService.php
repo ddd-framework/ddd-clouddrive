@@ -122,7 +122,7 @@ class DriveBlobsService extends EntitiesService
         }
         if ($driveUploadRequest->idempotencyKey !== null) {
             $existingBlob = $this->findBlobByIdempotencyKey($driveSpace, $driveUploadRequest->idempotencyKey);
-            if ($existingBlob !== null) {
+            if ($existingBlob !== null && $this->isBlobResumable($existingBlob, $sizeBytes)) {
                 return $this->buildReservation($existingBlob, null, $withPresignedRequests);
             }
         }
@@ -741,6 +741,23 @@ class DriveBlobsService extends EntitiesService
         return $driveBlob instanceof DriveBlob ? $driveBlob : null;
     }
 
+    /**
+     * Whether a reserve with a known idempotency key answers this blob again (a resumed or retried upload): the same
+     * size, and neither failed, being purged nor an expired unfinished upload (its parts may be gone) — else the reserve
+     * starts a new blob.
+     */
+    public function isBlobResumable(DriveBlob $driveBlob, int $sizeBytes): bool
+    {
+        if ((int)$driveBlob->sizeBytes !== $sizeBytes) {
+            return false;
+        }
+        if (in_array($driveBlob->state, [DriveBlob::STATE_FAILED, DriveBlob::STATE_SCAN_FAILED, DriveBlob::STATE_PURGING], true)) {
+            return false;
+        }
+        return !($driveBlob->state === DriveBlob::STATE_UPLOADING && isset($driveBlob->expiresAt) && $driveBlob->expiresAt->getTimestamp() <= time());
+    }
+
+    /** The newest blob of a space reserved with this idempotency key. */
     public function findBlobByIdempotencyKey(DriveSpace $driveSpace, string $idempotencyKey): ?DriveBlob
     {
         $repoClass = $this->getEntityRepoClassInstance();
@@ -750,6 +767,7 @@ class DriveBlobsService extends EntitiesService
             ->andWhere("{$alias}.idempotencyKey = :idempotencyKey")
             ->setParameter('driveSpaceId', (int)$driveSpace->id)
             ->setParameter('idempotencyKey', $idempotencyKey)
+            ->orderBy("{$alias}.id", 'DESC')
             ->setMaxResults(1);
         $driveBlob = $repoClass->find($queryBuilder, false);
         return $driveBlob instanceof DriveBlob ? $driveBlob : null;

@@ -189,6 +189,9 @@ export interface DriveUploadReserveArg {
   contentType?: string | null;
   contentMd5?: string | null;
   sha256?: string | null;
+  /** The file's name: the space's type policy checks its extension before any byte is sent. */
+  fileName?: string | null;
+  /** A reserve with a known key answers the open upload (`uploadedPartNumbers`): the client sends the missing parts only. */
   idempotencyKey?: string | null;
 }
 

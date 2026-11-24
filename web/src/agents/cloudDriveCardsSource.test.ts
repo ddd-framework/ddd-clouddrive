@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { configureStore } from '@reduxjs/toolkit';
 import { createApi } from '@reduxjs/toolkit/query/react';
-import { createCloudDriveCardsSource } from './cloudDriveCardsSource.ts';
+import { createCloudDriveCardsSource, translateDriveCardState } from './cloudDriveCardsSource.ts';
 import { buildDriveScreenHref, nodeIdOfDriveReference } from './driveScreenHref.ts';
 
 /** A host api on RTK Query whose base query answers the cards and content routes from fixtures. */
@@ -96,5 +96,16 @@ describe('drive screen link', () => {
   it('reads the node of a drive reference', () => {
     assert.equal(nodeIdOfDriveReference('drive/812'), '812');
     assert.equal(nodeIdOfDriveReference('drivespaces/library/Logo.svg'), null);
+  });
+});
+
+describe('drive card state', () => {
+  it('shows the model-facing state words as texts of the package and keeps an unknown state', () => {
+    assert.equal(translateDriveCardState('pending scan'), 'Being checked');
+    assert.equal(translateDriveCardState('blocked'), 'Blocked');
+    assert.equal(translateDriveCardState('written by a third party'), 'Written by a third party');
+    assert.equal(translateDriveCardState('archived'), 'archived');
+    assert.equal(translateDriveCardState(null), null);
+    assert.equal(translateDriveCardState(''), null);
   });
 });

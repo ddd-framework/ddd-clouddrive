@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.2
+
+- Resume after a cancel or a reload: the web client reserves with an idempotency key of the file (space, folder, name,
+  size, last change) and its name; a reserve with a known key answers the open upload with `uploadedPartNumbers`, so
+  only the missing parts are sent. The server resumes only a blob of the same size that is neither failed, being
+  purged nor an expired unfinished upload, else it starts a new one (the newest blob of a key wins).
+- Type check before the first byte: the web client sends `fileName` with the reservation, so a restricted space
+  refuses a type (declared content type and extension) at the reserve; completion still checks the real bytes.
+- The file list refreshes on its own while files of it are being checked (every 4 s in the first minute, then every
+  15 s, then every minute, none after 15 minutes; `driveListPollingIntervalOf`).
+- The state line of the agent's file cards ('pending scan', 'blocked', 'written by a third party') is a text of the
+  package (`translateDriveCardState`, keys `Being checked__drive-card-state` …, de/en through the host's translations).
+- OpenAPI: `uploadRequest` / `partRequests` of `DriveUploadReservation` are left out of the schema (`#[Ignore]`); the
+  runner of a working copy keeps them server side.
+
 ## 0.3.1
 
 - The release of 0.3.0 stopped before npm (the web text manifest still named 0.2.2): 0.3.1 is the first npm version

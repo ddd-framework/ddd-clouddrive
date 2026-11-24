@@ -1,6 +1,6 @@
 {
   "package": "@mgamadeus/ddd-clouddrive",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "generatedBy": "scripts/build-i18n-manifest.mjs",
   "keys": [
     {
@@ -10,6 +10,24 @@
         "screen/driveFileActions.ts"
       ],
       "hint": "Drive screen (cloud drive of the admin): error after an upload: a file with the same name is already in the target folder."
+    },
+    {
+      "key": "Being checked__drive-card-state",
+      "text": "Being checked",
+      "context": "drive-card-state",
+      "files": [
+        "agents/cloudDriveCardsSource.ts"
+      ],
+      "hint": "Agent chat, file card of the drive: state line of a file whose malware check is still running (not yet downloadable)."
+    },
+    {
+      "key": "Blocked__drive-card-state",
+      "text": "Blocked",
+      "context": "drive-card-state",
+      "files": [
+        "agents/cloudDriveCardsSource.ts"
+      ],
+      "hint": "Agent chat, file card of the drive: state line of a file the malware check blocked (cannot be opened or downloaded)."
     },
     {
       "key": "Choose a space",
@@ -149,6 +167,15 @@
         "screen/driveFileMapping.ts"
       ],
       "hint": "File manager details drawer, history: event type: someone opened the file's preview."
+    },
+    {
+      "key": "Written by a third party__drive-card-state",
+      "text": "Written by a third party",
+      "context": "drive-card-state",
+      "files": [
+        "agents/cloudDriveCardsSource.ts"
+      ],
+      "hint": "Agent chat, file card of the drive: state line of a file whose content came from outside (e.g. a mail attachment or a web page), not from the owner."
     },
     {
       "key": "You may read this space, but not change it.",

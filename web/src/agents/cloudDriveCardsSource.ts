@@ -1,4 +1,5 @@
 import type { DriveFileCard as AgentDriveFileCard, DriveFileCardsSource, DriveFileContent, DriveFilesRequest } from '@mgamadeus/ddd-agents';
+import { translateText } from '@mgamadeus/ddd-admin-ui/i18n';
 import type { InjectableBaseApi } from '@mgamadeus/ddd-admin-ui/logic/pure';
 import { createCloudDriveApi } from '../api.ts';
 import type { DriveContentGrantResponse, DriveFileCard, DriveFileCardsResponse } from '../types.ts';
@@ -34,6 +35,27 @@ export interface CloudDriveCardsSource extends DriveFileCardsSource {
 /** A card as the agents draw it: the drive's card with its screen link as `openLink`; the content URLs ride along. */
 type DriveCardOfAgents = AgentDriveFileCard & Pick<DriveFileCard, 'inlineUrl' | 'downloadUrl'>;
 
+/**
+ * The state line of a card in the owner's language: the drive answers the model-facing English words ('pending scan',
+ * 'blocked', 'written by a third party'); an unknown state is shown as it came.
+ */
+export const translateDriveCardState = (state: string | null | undefined): string | null => {
+  switch (state) {
+    case null:
+    case undefined:
+    case '':
+      return null;
+    case 'pending scan':
+      return translateText('Being checked', { context: 'drive-card-state' });
+    case 'blocked':
+      return translateText('Blocked', { context: 'drive-card-state' });
+    case 'written by a third party':
+      return translateText('Written by a third party', { context: 'drive-card-state' });
+    default:
+      return state;
+  }
+};
+
 const toAgentCard = (card: DriveFileCard): DriveCardOfAgents => ({
   reference: card.reference,
   name: card.name,
@@ -43,7 +65,7 @@ const toAgentCard = (card: DriveFileCard): DriveCardOfAgents => ({
   contentType: card.contentType ?? null,
   modifiedAt: card.modifiedAt ?? null,
   childCount: card.childCount ?? null,
-  state: card.state ?? null,
+  state: translateDriveCardState(card.state),
   thumbnailUrl: card.thumbnailUrl ?? null,
   urlsExpireAt: card.urlsExpireAt ?? null,
   openLink: card.adminLink ?? null,
