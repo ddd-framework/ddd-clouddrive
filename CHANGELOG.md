@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- The release of 0.3.0 stopped before npm (the web text manifest still named 0.2.2): 0.3.1 is the first npm version
+  with the backend transfers; the PHP package is the same as 0.3.0. Use 0.3.1 for both.
+
 ## 0.3.0
 
 Every byte goes through the backend; no presigned URL reaches a client any more (no compatibility mode).
