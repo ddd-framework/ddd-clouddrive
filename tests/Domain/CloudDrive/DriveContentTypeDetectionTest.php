@@ -43,6 +43,33 @@ class DriveContentTypeDetectionTest extends TestCase
         }
     }
 
+    public function testEveryPassiveTextSubtypeLibmagicNamesIsTreatedAsText(): void
+    {
+        $chooseContentType = new \ReflectionMethod(DriveBlobsService::class, 'chooseContentTypeFromSniffedType');
+        $cases = [
+            ['text/x-objective-c', 'brand.typ', null, 'text/plain'],
+            ['text/x-c', 'notes.md', null, 'text/markdown'],
+            ['text/x-c++', 'data.csv', null, 'text/csv'],
+            ['text/x-python', 'readme.txt', null, 'text/plain'],
+            ['text/x-markdown', 'unknown.ext', null, 'text/x-markdown'],
+            ['text/x-shellscript', 'run', 'text/markdown', 'text/markdown'],
+            ['text/x-shellscript', 'run', 'text/html', 'text/plain'],
+            ['text/html', 'page.md', null, 'text/html'],
+            ['text/xml', 'feed.txt', null, 'text/xml'],
+        ];
+        foreach ($cases as [$sniffedContentType, $fileName, $declaredContentType, $expectedContentType]) {
+            self::assertSame($expectedContentType, $chooseContentType->invoke(null, $sniffedContentType, $declaredContentType, $fileName), $sniffedContentType . ' / ' . $fileName);
+        }
+    }
+
+    public function testAnUnrefinedTextGuessCountsAsUnknownSoItIsReadAgain(): void
+    {
+        self::assertTrue(DriveBlobsService::isContentTypeUnknown('text/x-objective-c'));
+        self::assertFalse(DriveBlobsService::isContentTypeUnknown('text/x-markdown'));
+        self::assertFalse(DriveBlobsService::isContentTypeUnknown('text/plain'));
+        self::assertFalse(DriveBlobsService::isContentTypeUnknown('text/html'));
+    }
+
     public function testUnnamedBinaryKeepsOnlyAnApplicationClaimThatIsNoPdfOrText(): void
     {
         $binaryBytes = random_bytes(64) . "\x00\x01\x02";

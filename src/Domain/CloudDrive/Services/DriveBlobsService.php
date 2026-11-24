@@ -425,14 +425,22 @@ class DriveBlobsService extends EntitiesService
         }
         $declaredContentType = UntrustedContentHeaders::normalizeContentType($declaredContentType);
         $extension = strtolower(pathinfo((string)$fileName, PATHINFO_EXTENSION));
-        if ($sniffedContentType === 'text/plain' || $sniffedContentType === self::EMPTY_CONTENT_TYPE) {
+        // every passive text libmagic names (`text/plain`, but also `text/x-objective-c`, `text/x-c`, … for a markup or
+        // config file it misreads as code) is text: refined by the known text extensions, else kept when it is a text
+        // type the drive serves as text, else `text/plain` — never an active type (HTML, XML, JavaScript stay what they are)
+        if (static::isPassiveTextContentType($sniffedContentType) || $sniffedContentType === self::EMPTY_CONTENT_TYPE) {
             if (isset(self::TEXT_CONTENT_TYPES_BY_EXTENSION[$extension])) {
                 return self::TEXT_CONTENT_TYPES_BY_EXTENSION[$extension];
             }
-            if ($sniffedContentType === 'text/plain') {
-                return str_starts_with($declaredContentType, 'text/') ? $declaredContentType : 'text/plain';
+            if ($sniffedContentType === self::EMPTY_CONTENT_TYPE) {
+                return UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
             }
-            return UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+            if ($sniffedContentType !== 'text/plain' && static::isServedAsTextContentType($sniffedContentType)) {
+                return $sniffedContentType;
+            }
+            return static::isPassiveTextContentType($declaredContentType) && static::isServedAsTextContentType($declaredContentType)
+                ? $declaredContentType
+                : 'text/plain';
         }
         if (in_array($sniffedContentType, self::ZIP_CONTENT_TYPES, true)) {
             if (isset(self::CONTAINER_CONTENT_TYPES_BY_EXTENSION[$extension])) {
@@ -456,7 +464,24 @@ class DriveBlobsService extends EntitiesService
     public static function isContentTypeUnknown(?string $contentType): bool
     {
         $normalizedContentType = UntrustedContentHeaders::normalizeContentType($contentType);
-        return $normalizedContentType === '' || $normalizedContentType === UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        return $normalizedContentType === '' || $normalizedContentType === UntrustedContentHeaders::OPAQUE_CONTENT_TYPE
+            // a passive text subtype the drive does not serve as text (`text/x-objective-c` for a misread markup file):
+            // older writes stored libmagic's guess unrefined; the bytes are read again so it becomes a text type
+            || (static::isPassiveTextContentType($normalizedContentType) && !static::isServedAsTextContentType($normalizedContentType));
+    }
+
+    /** A `text/*` type that is not active content (HTML, XML, JavaScript, VTT… stay active, {@see UntrustedContentHeaders::ACTIVE_CONTENT_TYPES}) */
+    public static function isPassiveTextContentType(?string $contentType): bool
+    {
+        $normalizedContentType = UntrustedContentHeaders::normalizeContentType($contentType);
+        return str_starts_with($normalizedContentType, 'text/')
+            && !in_array($normalizedContentType, UntrustedContentHeaders::ACTIVE_CONTENT_TYPES, true);
+    }
+
+    /** A text type the drive serves inline as text ({@see DriveContentGrantsService::TEXT_INLINE_SOURCE_CONTENT_TYPES}) */
+    public static function isServedAsTextContentType(?string $contentType): bool
+    {
+        return in_array(UntrustedContentHeaders::normalizeContentType($contentType), DriveContentGrantsService::TEXT_INLINE_SOURCE_CONTENT_TYPES, true);
     }
 
     /**
@@ -511,8 +536,9 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * Blobs whose stored type is unknown (missing or `application/octet-stream`), by id after `$afterDriveBlobId`, for
-     * the content type backfill. Every space (a system job; the caller runs as the CLI account).
+     * Blobs whose stored type is unknown (missing or `application/octet-stream`) or an unrefined `text/x-*` guess, by
+     * id after `$afterDriveBlobId`, for the content type backfill (a `text/x-*` type the drive serves as text, e.g.
+     * `text/x-markdown`, is re-read and stays as it is). Every space (a system job; the caller runs as the CLI account).
      */
     public function findBlobsWithUnknownContentType(int $afterDriveBlobId, int $limit, ?int $driveSpaceId = null): DriveBlobs
     {
@@ -520,8 +546,9 @@ class DriveBlobsService extends EntitiesService
         $queryBuilder = $repoClass::createQueryBuilder(true);
         $alias = $repoClass::getBaseModelAlias();
         $queryBuilder->andWhere("{$alias}.id > :afterDriveBlobId")->setParameter('afterDriveBlobId', $afterDriveBlobId)
-            ->andWhere("({$alias}.contentType IS NULL OR {$alias}.contentType = '' OR {$alias}.contentType = :opaqueContentType)")
+            ->andWhere("({$alias}.contentType IS NULL OR {$alias}.contentType = '' OR {$alias}.contentType = :opaqueContentType OR {$alias}.contentType LIKE :textSubtypePattern)")
             ->setParameter('opaqueContentType', UntrustedContentHeaders::OPAQUE_CONTENT_TYPE)
+            ->setParameter('textSubtypePattern', 'text/x-%')
             ->andWhere("{$alias}.storageKey IS NOT NULL")
             ->orderBy("{$alias}.id", 'ASC')->setMaxResults(max(1, $limit));
         if ($driveSpaceId !== null) {

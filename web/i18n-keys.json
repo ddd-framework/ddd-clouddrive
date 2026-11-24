@@ -1,6 +1,6 @@
 {
   "package": "@mgamadeus/ddd-clouddrive",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "generatedBy": "scripts/build-i18n-manifest.mjs",
   "keys": [
     {

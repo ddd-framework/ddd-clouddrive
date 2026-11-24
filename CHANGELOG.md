@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- Every passive text type libmagic names is text: `text/x-objective-c`, `text/x-c`, … (a markup or config file it
+  misreads as code) are refined by the known text extensions like `text/plain`, else kept when the drive serves them
+  as text, else stored as `text/plain` — so they open inline as text. Active text (HTML, XML, JavaScript) is unchanged.
+- An unrefined `text/x-*` guess stored by an older write counts as unknown: it is read again from the bytes when it is
+  served, and `app:drive:backfill-content-types` picks it up (`DriveBlobsService::isPassiveTextContentType()`,
+  `isServedAsTextContentType()`).
+
 ## 0.1.2
 
 - Content types from the bytes on every write path: the ingest (uploads, working-copy and sandbox commits, agent
