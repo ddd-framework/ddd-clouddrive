@@ -160,7 +160,9 @@ Untrusted input: every file in a drive is foreign. The module never decodes, con
 `ddd-untrusted-input-specialist`.
 
 Evals (ddd-agents ≥ 0.1.29): every case gets a throwaway own drive seeded from its `scratchFiles`; further mounts are
-read-only during the case; the space is erased at the end (`--keepWorkspace` keeps it).
+read-only during the case — for every write tool, whether it names the file by path or by `drive/<id>`; the refusal
+tells the model to copy into the own drive — and the space is erased at the end (`--keepWorkspace` keeps it). A case
+that exercises the write tools on a shared space works on a copy in its own drive.
 
 ## Frontend
 

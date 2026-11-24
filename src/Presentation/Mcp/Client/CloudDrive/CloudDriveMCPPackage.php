@@ -334,7 +334,7 @@ class CloudDriveMCPPackage extends MCPPackage
                 throw new NotFoundException(sprintf('%s is not in a mounted drive.', $reference));
             }
             if ($agentDriveMount->getEffectiveWriteMode() === AgentDriveMount::MODE_READ_ONLY) {
-                throw new ForbiddenException(sprintf('%s is read-only for you.', rtrim($agentDriveMount->getPathPrefix(), '/') ?: 'The own drive'));
+                throw new ForbiddenException($this->buildReadOnlyRefusal($agentDriveMount, $callProvenance));
             }
             $driveNode = $driveNodesService->restoreNode($driveNode);
             $resultLines[] = '- restored ' . $agentDriveMount->getPathPrefix() . $driveNodesService->buildPath($driveNode);
@@ -655,7 +655,8 @@ class CloudDriveMCPPackage extends MCPPackage
         AgentToolCallProvenance $callProvenance,
         string $argument
     ): DriveMountedNode {
-        $agentDrivePath = $agentDriveStoresService->resolveDrivePath($agentDriveStoresService->findMountsOfCall($callProvenance), $argument);
+        $agentDriveMounts = $agentDriveStoresService->findMountsOfCall($callProvenance);
+        $agentDrivePath = $agentDriveStoresService->resolveDrivePath($agentDriveMounts, $argument);
         $agentDriveMount = $agentDrivePath->agentDriveMount;
         if ($agentDriveMount === null || $agentDriveMount->storeName !== CloudDriveAgentDriveStoreService::STORE_NAME) {
             throw new BadRequestException(sprintf('"%s" is no path of the drive.', $argument));
@@ -667,6 +668,8 @@ class CloudDriveMCPPackage extends MCPPackage
         if ($driveNode === null) {
             throw new NotFoundException(sprintf('"%s" does not exist in the drive (commit a new file first, or check the path with listDriveFiles).', $argument));
         }
+        // a reference names a node of any space: the mount of that node's space decides the write mode, never the own drive
+        $agentDriveMount = $cloudDriveAgentDriveStoreService->requireMountOfNode($agentDriveMounts, $agentDrivePath, $driveNode);
         $driveMountedNode = new DriveMountedNode();
         $driveMountedNode->agentDriveMount = $agentDriveMount;
         $driveMountedNode->driveNode = $driveNode;
@@ -689,7 +692,7 @@ class CloudDriveMCPPackage extends MCPPackage
     ): ?OwnerConsentReservation {
         $writeMode = $agentDriveMount->getEffectiveWriteMode();
         if ($writeMode === AgentDriveMount::MODE_READ_ONLY) {
-            throw new ForbiddenException(sprintf('%s is read-only for you: nothing was changed.', rtrim($agentDriveMount->getPathPrefix(), '/') ?: 'The own drive'));
+            throw new ForbiddenException($this->buildReadOnlyRefusal($agentDriveMount, $callProvenance));
         }
         if ($writeMode !== AgentDriveMount::MODE_WRITE_WITH_CONSENT) {
             return null;
@@ -701,6 +704,18 @@ class CloudDriveMCPPackage extends MCPPackage
             'people of that space (' . ($agentDriveMount->audienceDescription ?? 'outside the staff') . ') see the change',
             $toolName . '|' . $targetPath
         ));
+    }
+
+    /** The refusal of a write into a read-only mount, naming why when the call runs on a scratch drive (an evaluation) */
+    protected function buildReadOnlyRefusal(AgentDriveMount $agentDriveMount, AgentToolCallProvenance $callProvenance): string
+    {
+        $refusal = sprintf('%s is read-only for you: nothing was changed.', rtrim($agentDriveMount->getPathPrefix(), '/') ?: 'The own drive');
+        /** @var CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService */
+        $cloudDriveAgentDriveStoreService = DDDService::instance()->getService(CloudDriveAgentDriveStoreService::class);
+        if (!$agentDriveMount->isOwnDrive && $cloudDriveAgentDriveStoreService->isScratchDriveCall($callProvenance)) {
+            $refusal .= ' This run uses a scratch drive (an evaluation): shared spaces are read-only and only the own drive takes writes. Copy the file into the own drive with saveDriveFile and work there.';
+        }
+        return $refusal;
     }
 
     /** The working copy of the own drive for the call's sandbox (the resolver's key, else the newest one); null without own drive */

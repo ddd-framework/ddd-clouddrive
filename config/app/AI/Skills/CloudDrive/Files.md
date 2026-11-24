@@ -32,7 +32,8 @@ lock and top-level folders: `getDriveSpace` (`own` or the mount name).
 
 **Mounted spaces.** `saveDriveFile` copies files into a space (or from the library into the own drive) on the server.
 `organizeDriveFiles` moves, renames, tags and describes; `createDriveFolder` makes a folder; `trashDriveFiles` only on
-the owner's request, never emptying the trash; `restoreDriveFiles` brings files back. A read-only mount refuses; a
+the owner's request, never emptying the trash; `restoreDriveFiles` brings files back. A read-only mount refuses, by
+path and by `drive/<id>` alike (in an evaluation every space but the own drive is read-only); a
 space people outside the staff see asks the owner first: say which space and who will see the files. Change only what
 the owner named, once; report what the result says.
 

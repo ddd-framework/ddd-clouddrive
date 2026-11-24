@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1
+
+- A reference `drive/<id>` takes the mount of the node's own space: `organizeDriveFiles` (move, rename, tag,
+  describe), `getDriveFile`, `listDriveFiles`, `findDriveFiles` and the source of `saveDriveFile` resolved a reference
+  against the own drive, so a write by reference skipped the read-only mode and the owner consent of a shared space
+  (and a copy by reference did not mark shared content as third-party). Now a write by reference into a read-only
+  space refuses like one by path, a write into a space outside the staff asks the owner, and a reference to a node of
+  no mounted space answers "not in a mounted drive" (`CloudDriveAgentDriveStoreService::requireMountOfNode()`).
+- Evaluations: with a scratch drive every space but the own drive stays read-only — now for every write tool alike
+  (restore and create folder refused while move and rename by reference passed). The refusal says the run is an
+  evaluation and to copy the file into the own drive (`isScratchDriveCall()`).
+
+Host: nothing to change. An eval case that moved or renamed shared files by reference now gets the read-only refusal:
+let it work on a copy in its own drive.
+
 ## 0.2.0
 
 Breaking for hosts with ddd-agents (a host's `^0.1` constraint does not pull it). What a host renames:

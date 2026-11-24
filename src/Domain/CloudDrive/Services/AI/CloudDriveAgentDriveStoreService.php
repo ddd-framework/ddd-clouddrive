@@ -96,6 +96,7 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         if ($driveNode === null) {
             throw new NotFoundException(sprintf('"%s" does not exist (or you may not read it).', $agentDrivePath->argument));
         }
+        $agentDriveMount = $this->requireMountOfNode($this->findMountsOfReference($callProvenance, $agentDrivePath), $agentDrivePath, $driveNode);
         $agentDriveListing = new AgentDriveListing();
         $agentDriveListing->agentDriveMount = $agentDriveMount;
         $agentDriveListing->agentDriveFiles = new AgentDriveFiles();
@@ -129,6 +130,9 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 // a file of the own drive the sandbox just wrote or changed is committed first, so a card shows it
                 $this->commitUncommittedSource($callProvenance, $agentDriveMount, $driveSpace, $agentDrivePath);
                 $driveNode = $this->findNodeOfPath($driveSpace, $agentDrivePath);
+                if ($driveNode !== null) {
+                    $agentDriveMount = $this->requireMountOfNode($this->findMountsOfReference($callProvenance, $agentDrivePath), $agentDrivePath, $driveNode);
+                }
             } catch (NotFoundException|BadRequestException) {
                 continue;
             }
@@ -159,6 +163,11 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 if ($sourceNode === null || !$sourceNode->isFile() || $sourceNode->latestVersionId === null) {
                     $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': no file of the drive (commit it first, or check the path)';
                     continue;
+                }
+                if ($sourcePath->reference !== null) {
+                    // a reference names a node of any space: its own space decides whether the copy counts as third-party content
+                    $sourceMount = $this->requireMountOfNode($this->findMountsOfReference($callProvenance, $sourcePath), $sourcePath, $sourceNode);
+                    $sourceSpace = $this->requireSpaceOfMount($sourceMount);
                 }
                 $sourceVersion = $this->getDriveVersionsService()->find((int)$sourceNode->latestVersionId, false);
                 $sourceBlob = $sourceVersion !== null ? $this->getDriveBlobsService()->find((int)$sourceVersion->driveBlobId, false) : null;
@@ -317,6 +326,39 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             DDDService::instance()->getLogger()->warning('[CloudDrive] commit before a copy failed', ['path' => $sourcePath->pathInMount, 'reason' => $throwable->getMessage()]);
             return 'its saved change could not be committed first: ' . $throwable->getMessage();
         }
+    }
+
+    /**
+     * The mount a node belongs to. A path names a node inside the mount it was resolved in; a reference (`drive/<id>`)
+     * names a node of any space and is resolved against the own drive, so its real mount is the one of the node's
+     * space — that mount's mode (read-only, write with consent) applies, never the own drive's.
+     *
+     * @throws NotFoundException when the referenced node lies in no mounted space
+     */
+    public function requireMountOfNode(AgentDriveMounts $agentDriveMounts, AgentDrivePath $agentDrivePath, DriveNode $driveNode): AgentDriveMount
+    {
+        if ($agentDrivePath->reference === null && $agentDrivePath->agentDriveMount !== null) {
+            return $agentDrivePath->agentDriveMount;
+        }
+        foreach ($agentDriveMounts->getElements() as $agentDriveMount) {
+            if ($agentDriveMount->storeName === self::STORE_NAME && (int)$agentDriveMount->spaceKey === (int)$driveNode->driveSpaceId) {
+                return $agentDriveMount;
+            }
+        }
+        throw new NotFoundException(sprintf('%s is not in a mounted drive.', $agentDrivePath->reference ?? $agentDrivePath->argument));
+    }
+
+    /** Whether the call runs on an eval case's scratch drive (shared spaces then are mounted read-only) */
+    public function isScratchDriveCall(AgentToolCallProvenance $callProvenance): bool
+    {
+        return $callProvenance->workspaceKey !== null
+            && $this->getDriveSpacesService()->findSpaceByScratchKey($callProvenance->workspaceKey) !== null;
+    }
+
+    /** The mounts of the call, read only for a reference (a path carries its mount) */
+    protected function findMountsOfReference(AgentToolCallProvenance $callProvenance, AgentDrivePath $agentDrivePath): AgentDriveMounts
+    {
+        return $agentDrivePath->reference !== null ? $this->findMountsOfCall($callProvenance) : new AgentDriveMounts();
     }
 
     protected function buildMount(DriveSpace $driveSpace, string $mountName, string $mode, ?string $audienceDescription): AgentDriveMount
