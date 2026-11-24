@@ -21,6 +21,9 @@ use DDD\Domain\AI\Services\Conversations\AIConversationMessagesService;
 use DDD\Domain\AI\Services\Drives\AgentDriveStoresService;
 use DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets\DriveLocationConversationWidget;
 use DDD\Domain\CloudDrive\Entities\AI\Mounts\DriveMountedNode;
+use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
+use DDD\Domain\CloudDrive\Entities\Media\DriveMediaImport;
+use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
@@ -28,7 +31,10 @@ use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveCommitResolution;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveCommitResolutions;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
-use DDD\Domain\CloudDrive\Services\Agents\CloudDriveAgentDriveStoreService;
+use DDD\Domain\CloudDrive\Services\AI\CloudDriveAgentDriveStoreService;
+use DDD\Domain\CloudDrive\Services\DriveBlobsService;
+use DDD\Domain\CloudDrive\Services\DriveChangesService;
+use DDD\Domain\CloudDrive\Services\DriveMediaLibraryBridgeService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
@@ -38,6 +44,10 @@ use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveChangesCommitRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileEventsListRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileMediaImportRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileVersionRescanRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFolderCreateRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileGetRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesFindRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesOrganizeRequestDto;
@@ -45,6 +55,8 @@ use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesRestoreRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesTrashRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveLocationShowRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveMcpResponseDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveSpaceGetRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveSpaceSettingsSetRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveStatusRequestDto;
 
 /**
@@ -54,14 +66,16 @@ use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveStatusRequestDto;
  */
 class CloudDriveMCPPackage extends MCPPackage
 {
-    public static ?string $name = 'clouddrive';
+    public static ?string $name = 'clouddrive.files';
 
-    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles and getDriveFile without a download, organizeDriveFiles, trashDriveFiles and restoreDriveFiles in mounted spaces, showDriveLocation as a link.';
+    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles, getDriveFile, listDriveFileEvents and getDriveSpace without a download, organizeDriveFiles, createDriveFolder, trashDriveFiles, restoreDriveFiles, rescanDriveFileVersion and setDriveSpaceSettings in mounted spaces, importDriveFileToMediaLibrary, showDriveLocation as a link.';
 
     public const int DEFAULT_FIND_LIMIT = 30;
     public const int MAX_FIND_LIMIT = 100;
     public const int MAX_TRASH_PATHS = 50;
     public const string OWN_SPACE_FILTER = 'own';
+    public const int DEFAULT_EVENTS_LIMIT = 30;
+    public const int MAX_EVENTS_LIMIT = 100;
 
     /**
      * The state of the own drive and the mounts: uncommitted changes (with conflicts and their reason), every mount
@@ -364,6 +378,269 @@ class CloudDriveMCPPackage extends MCPPackage
         $conversationWidgetDelivery = $aIConversationMessagesService->appendWidget($callProvenance, $driveLocationWidget);
         $dictationNote = $driveLocationWidget->buildDictationNote($conversationWidgetDelivery, 'Say where the files are in one short sentence.');
         return DriveMcpResponseDto::withLines([], $dictationNote ?? 'The link is shown. Write one short line about it; do not write a URL.');
+    }
+
+    /**
+     * The facts of one mounted space: title, who sees it, the audience's write lock, quota and use (current
+     * versions, older versions, trash), largest file, counts and the top-level folders. For a space's file area.
+     *
+     * @example {"space": "own"}
+     * @example {"space": "space-12"}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::READ)]
+    #[MCPToolParallelSafe('reads of the drive tables')]
+    #[MCPToolSummary('The facts of one mounted drive space: write lock, quota, use, counts, top-level folders.')]
+    public function getDriveSpace(
+        DriveSpaceGetRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveSpacesService $driveSpacesService,
+        DriveBlobsService $driveBlobsService,
+        DriveNodesService $driveNodesService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        $agentDriveMount = $this->requireMountOfSpaceArgument($agentDriveStoresService, $callProvenance, $requestDto->space);
+        $driveSpace = $driveSpacesService->requireSpaceWithRight((int)$agentDriveMount->spaceKey, DBDriveSpace::RIGHT_READ);
+        $driveSpaceUsage = $driveBlobsService->findSpaceUsages([(int)$driveSpace->id])->first();
+        $driveSpaceQuota = $driveSpacesService->buildSpaceQuota($driveSpace, $driveSpaceUsage);
+        $megabyte = 1024 * 1024;
+        $spaceLines = [
+            sprintf('- %s · %s · %s', $agentDriveMount->getPathPrefix() ?: 'own drive', $driveSpacesService->buildSpaceDisplayName($driveSpace), $driveSpace->isShared() ? 'shared with ' . ($agentDriveMount->audienceDescription ?? 'people outside the staff') : 'staff only'),
+            $driveSpace->isShared() ? ('- audience writes: ' . ($driveSpace->isAudienceWriteLocked ? 'locked (they only read)' : 'allowed')) : '- audience writes: no audience',
+            sprintf('- used %d MB of %d MB (current %d MB, older versions %d MB, trash %d MB, pending %d MB) · largest file %d MB',
+                intdiv($driveSpaceQuota->usedBytes, $megabyte), intdiv($driveSpaceQuota->effectiveQuotaBytes, $megabyte),
+                intdiv($driveSpaceQuota->currentVersionBytes, $megabyte), intdiv($driveSpaceQuota->olderVersionBytes, $megabyte),
+                intdiv($driveSpaceQuota->trashedBytes, $megabyte), intdiv($driveSpaceQuota->pendingBytes, $megabyte),
+                intdiv($driveSpaceQuota->maxFileSizeBytes, $megabyte)),
+            sprintf('- %d files, %d folders · trash kept %d days', $driveSpaceQuota->fileCount, $driveSpaceQuota->folderCount, $driveSpaceQuota->trashRetentionDays),
+        ];
+        $rootNode = $driveNodesService->findRootNode($driveSpace);
+        if ($rootNode !== null) {
+            foreach ($driveNodesService->findChildren($rootNode, null, 50, false)->getElements() as $childNode) {
+                if ($childNode->isFolder()) {
+                    $spaceLines[] = '  folder ' . $agentDriveMount->getPathPrefix() . $childNode->name . '/ · ' . $childNode->buildReference();
+                }
+            }
+        }
+        return DriveMcpResponseDto::withLines($spaceLines);
+    }
+
+    /**
+     * Who did what with one file or folder, newest first: writes, moves, renames, trash and restore, scan results
+     * and (eventGroup `accesses`) views and downloads, with the person and for whom they acted.
+     *
+     * @example {"path": "drive/812"}
+     * @example {"path": "drivespaces/library/Brand/Logo.svg", "eventGroup": "changes", "limit": 10}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::READ)]
+    #[MCPToolParallelSafe('reads of the drive tables')]
+    #[MCPToolSummary('The history of one drive file or folder: who changed, moved, trashed or opened it, newest first.')]
+    public function listDriveFileEvents(
+        DriveFileEventsListRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveChangesService $driveChangesService,
+        CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        $driveMountedNode = $this->requireNodeOfArgument($agentDriveStoresService, $cloudDriveAgentDriveStoreService, $callProvenance, $requestDto->path);
+        $eventGroup = $requestDto->eventGroup !== null && trim($requestDto->eventGroup) !== '' ? strtolower(trim($requestDto->eventGroup)) : null;
+        $limit = max(1, min(self::MAX_EVENTS_LIMIT, $requestDto->limit ?? self::DEFAULT_EVENTS_LIMIT));
+        $eventLines = [];
+        foreach ($driveChangesService->buildNodeHistory($driveMountedNode->driveNode, $limit, null, $eventGroup)->getElements() as $driveChangeEventListItem) {
+            $eventLines[] = sprintf(
+                '- %s · %s%s%s%s%s',
+                $driveChangeEventListItem->occurredAt?->format('Y-m-d H:i') ?? '',
+                strtolower($driveChangeEventListItem->eventType),
+                $driveChangeEventListItem->actorName !== null ? ' · by ' . $driveChangeEventListItem->actorName : ($driveChangeEventListItem->actorAccountId === null ? ' · by the system' : ''),
+                $driveChangeEventListItem->onBehalfOfName !== null ? ' for ' . $driveChangeEventListItem->onBehalfOfName : '',
+                $driveChangeEventListItem->previousPath !== null && $driveChangeEventListItem->previousPath !== $driveChangeEventListItem->path ? ' · from ' . $driveChangeEventListItem->previousPath : '',
+                $driveChangeEventListItem->detail !== null && $driveChangeEventListItem->detail !== '' ? ' · ' . $driveChangeEventListItem->detail : ''
+            );
+        }
+        return DriveMcpResponseDto::withLines($eventLines === [] ? ['no events'] : $eventLines);
+    }
+
+    /**
+     * Creates a folder in a mounted space. A read-only mount refuses; a space people outside the staff see asks the
+     * owner first. In the own drive use mkdir in the shell and commit.
+     *
+     * @example {"parentPath": "drivespaces/space-12/Rechnungen", "name": "2026"}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::WRITE)]
+    #[MCPToolRequiresOwnerConfirmation]
+    #[MCPToolSummary('Creates a folder in a mounted drive space.')]
+    public function createDriveFolder(
+        DriveFolderCreateRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveNodesService $driveNodesService,
+        DriveSpacesService $driveSpacesService,
+        OwnerConsentsService $ownerConsentsService,
+        CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        $folderName = trim($requestDto->name);
+        if ($folderName === '' || str_contains($folderName, '/')) {
+            throw new BadRequestException('`name` is one folder name without a slash.');
+        }
+        $driveMountedNode = $this->requireNodeOfArgument($agentDriveStoresService, $cloudDriveAgentDriveStoreService, $callProvenance, $requestDto->parentPath);
+        $agentDriveMount = $driveMountedNode->agentDriveMount;
+        $parentNode = $driveMountedNode->driveNode;
+        if ($agentDriveMount->isOwnDrive) {
+            throw new BadRequestException('In the own drive create folders with mkdir in the shell and commit.');
+        }
+        if (!$parentNode->isFolder()) {
+            throw new BadRequestException('`parentPath` must be a folder.');
+        }
+        $ownerConsentReservation = $this->requireWriteAllowed($agentDriveMount, $ownerConsentsService, $callProvenance, 'createDriveFolder', 'create a folder in a shared drive space', $requestDto->parentPath . '/' . $folderName);
+        $driveSpace = $driveSpacesService->requireSpaceWithRight((int)$agentDriveMount->spaceKey, DBDriveSpace::RIGHT_WRITE);
+        if ($driveNodesService->findChildByName($parentNode, $folderName) !== null) {
+            throw new BadRequestException(sprintf('"%s" exists already in that folder: nothing was created.', $folderName));
+        }
+        $folderNode = $driveNodesService->createFolder($driveSpace, $parentNode, $folderName);
+        if ($ownerConsentReservation !== null) {
+            $ownerConsentsService->markConsentUsed($callProvenance, $ownerConsentReservation);
+        }
+        return DriveMcpResponseDto::withLines(
+            ['- ' . $cloudDriveAgentDriveStoreService->buildAgentDriveFile($agentDriveMount, $folderNode)->buildLlmLine()],
+            'Created the folder.'
+        );
+    }
+
+    /**
+     * Runs the malware scan of one version again whose scan failed (SCAN_FAILED in getDriveFile): a clean result
+     * releases it, a finding blocks it. Use the version id as named, no read first.
+     *
+     * @example {"versionId": 4711}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::WRITE)]
+    #[MCPToolSummary('Runs the malware scan of a drive file version whose scan failed again.')]
+    public function rescanDriveFileVersion(
+        DriveFileVersionRescanRequestDto $requestDto,
+        DriveVersionsService $driveVersionsService,
+        DriveBlobsService $driveBlobsService,
+        DriveSpacesService $driveSpacesService
+    ): DriveMcpResponseDto {
+        $driveFileVersion = $driveVersionsService->find($requestDto->versionId, false);
+        if (!$driveFileVersion instanceof DriveFileVersion) {
+            throw new NotFoundException(sprintf('Version %d not found.', $requestDto->versionId));
+        }
+        $driveSpacesService->requireSpaceWithRight((int)$driveFileVersion->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+        $driveBlob = $driveBlobsService->find((int)$driveFileVersion->driveBlobId, false);
+        if (!$driveBlob instanceof DriveBlob) {
+            throw new NotFoundException(sprintf('The content of version %d is gone.', $requestDto->versionId));
+        }
+        if (!in_array($driveBlob->state, [DriveBlob::STATE_SCAN_FAILED, DriveBlob::STATE_FAILED], true)) {
+            return DriveMcpResponseDto::withLines([], sprintf('No change: the scan of version %d is %s, only a failed scan runs again.', $requestDto->versionId, strtolower((string)$driveBlob->state)));
+        }
+        $blobState = $driveVersionsService->rescanBlob($driveBlob);
+        return DriveMcpResponseDto::withLines([], sprintf('Scanned version %d again: %s.', $requestDto->versionId, strtolower($blobState)));
+    }
+
+    /**
+     * Sets what a manager of a mounted space sets: whether the people it is shared with may write
+     * (`isAudienceWriteLocked`), its quota and its largest file in megabytes (1 GB = 1024; 0 returns to the default).
+     * Only what the owner named. Needs the manage right; asks the owner first.
+     *
+     * @example {"space": "space-12", "isAudienceWriteLocked": true}
+     * @example {"space": "space-12", "quotaMegabytes": 2048, "maxFileSizeMegabytes": 100}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::WRITE)]
+    #[MCPToolRequiresOwnerConfirmation]
+    #[MCPToolSummary('Sets the audience write lock, the quota or the largest file of a mounted drive space.')]
+    public function setDriveSpaceSettings(
+        DriveSpaceSettingsSetRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveSpacesService $driveSpacesService,
+        OwnerConsentsService $ownerConsentsService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        if ($requestDto->isAudienceWriteLocked === null && $requestDto->quotaMegabytes === null && $requestDto->maxFileSizeMegabytes === null) {
+            throw new BadRequestException('Name at least one of `isAudienceWriteLocked`, `quotaMegabytes`, `maxFileSizeMegabytes`.');
+        }
+        $agentDriveMount = $this->requireMountOfSpaceArgument($agentDriveStoresService, $callProvenance, $requestDto->space);
+        $driveSpace = $driveSpacesService->requireSpaceWithRight((int)$agentDriveMount->spaceKey, DBDriveSpace::RIGHT_MANAGE);
+        $ownerConsentReservation = $ownerConsentsService->requireOwnerConsentForStep($callProvenance, OwnerConsentRequest::forAction(
+            'setDriveSpaceSettings',
+            'change the settings of a drive space',
+            $agentDriveMount->title,
+            $driveSpace->isShared() ? 'people of that space (' . ($agentDriveMount->audienceDescription ?? 'outside the staff') . ') are affected' : 'the staff of that space are affected',
+            'setDriveSpaceSettings|' . $agentDriveMount->spaceKey
+        ));
+        $megabyte = 1024 * 1024;
+        $driveSpace = $driveSpacesService->updateSpaceSettings(
+            $driveSpace,
+            $requestDto->isAudienceWriteLocked,
+            $requestDto->quotaMegabytes !== null ? $requestDto->quotaMegabytes * $megabyte : null,
+            $requestDto->maxFileSizeMegabytes !== null ? $requestDto->maxFileSizeMegabytes * $megabyte : null
+        );
+        if ($ownerConsentReservation !== null) {
+            $ownerConsentsService->markConsentUsed($callProvenance, $ownerConsentReservation);
+        }
+        return DriveMcpResponseDto::withLines([sprintf(
+            '- %s · audience writes %s · quota %d MB · largest file %d MB',
+            $agentDriveMount->title,
+            $driveSpace->isAudienceWriteLocked ? 'locked' : 'allowed',
+            intdiv($driveSpace->getEffectiveQuotaBytes(), $megabyte),
+            intdiv($driveSpace->getEffectiveMaxFileSizeBytes(), $megabyte)
+        )], 'Saved.');
+    }
+
+    /**
+     * Takes one image of the drive (JPEG, PNG, GIF, WebP, released by the malware scan) into the media library as a
+     * media item with title and description; the drive file stays as it is. Only when the owner asks. Answers the
+     * media item's id; a library that holds the bytes already answers its item.
+     *
+     * @example {"path": "drive/812", "title": "Sommeraktion Titelbild", "description": "Radfahrer am See bei Sonnenuntergang"}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::WRITE)]
+    #[MCPToolSummary('Takes one image of the drive into the media library (title, description); the file stays.')]
+    public function importDriveFileToMediaLibrary(
+        DriveFileMediaImportRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveMediaLibraryBridgeService $driveMediaLibraryBridgeService,
+        CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        if (!$driveMediaLibraryBridgeService->isMediaLibraryAvailable()) {
+            throw new BadRequestException('This application has no media library to take drive files into: nothing was imported.');
+        }
+        $driveMountedNode = $this->requireNodeOfArgument($agentDriveStoresService, $cloudDriveAgentDriveStoreService, $callProvenance, $requestDto->path);
+        $driveNode = $driveMountedNode->driveNode;
+        $refusalReason = $driveMediaLibraryBridgeService->findImportRefusalReason($driveNode);
+        if ($refusalReason !== null) {
+            throw new BadRequestException(ucfirst($refusalReason) . ': nothing was imported.');
+        }
+        $driveMediaImport = new DriveMediaImport();
+        $driveMediaImport->title = $requestDto->title !== null && trim($requestDto->title) !== '' ? trim($requestDto->title) : null;
+        $driveMediaImport->description = $requestDto->description !== null && trim($requestDto->description) !== '' ? trim($requestDto->description) : null;
+        $driveMediaImportResult = $driveMediaLibraryBridgeService->importFileIntoMediaLibrary($driveNode, $driveMediaImport);
+        if (!$driveMediaImportResult->isImported()) {
+            throw new BadRequestException(ucfirst((string)($driveMediaImportResult->refusalReason ?? 'the media library took nothing')) . ': nothing was imported.');
+        }
+        return DriveMcpResponseDto::withLines(
+            [sprintf('- media item %d · %s', (int)$driveMediaImportResult->mediaItemId, $driveMediaImportResult->title ?? (string)$driveNode->name)],
+            $driveMediaImportResult->isAlreadyInLibrary ? 'The library held this image already.' : 'Imported into the media library.'
+        );
+    }
+
+    /**
+     * The mount a space argument names: `own` or a mount name.
+     *
+     * @throws BadRequestException
+     */
+    protected function requireMountOfSpaceArgument(AgentDriveStoresService $agentDriveStoresService, AgentToolCallProvenance $callProvenance, string $spaceArgument): AgentDriveMount
+    {
+        $spaceArgument = trim($spaceArgument);
+        $agentDriveMount = $spaceArgument !== '' ? $this->findCloudDriveMounts($agentDriveStoresService->findMountsOfCall($callProvenance), $spaceArgument)->first() : null;
+        if (!$agentDriveMount instanceof AgentDriveMount) {
+            throw new BadRequestException(sprintf('"%s" is no mounted drive space: use `own` or a mount name driveStatus lists.', $spaceArgument));
+        }
+        return $agentDriveMount;
     }
 
     /**

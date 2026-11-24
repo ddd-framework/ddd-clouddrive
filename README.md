@@ -57,11 +57,30 @@ folders and versioned files whose bytes live in object storage, working copies f
   compare and swap on each file's newest version (`commitChanges()`), pulls what others changed
   (`findChangesSince()`). A conflict is never overwritten: it stays saved until it is resolved with mine, theirs or
   both. `DriveTextMergeService` merges text three-way with `git merge-file`.
-- **Agent part** (only with ddd-agents installed): the drive store behind `agent.drive`
-  (`CloudDriveAgentDriveStoreService`), the mount resolver a host overrides (`DriveSpaceMountResolverService`), the
-  tool package `clouddrive` (`driveStatus`, `commitDriveChanges`, `findDriveFiles`, `getDriveFile`,
-  `organizeDriveFiles`, `trashDriveFiles`, `restoreDriveFiles`, `showDriveLocation`), the widget `DriveLocation` and
-  the skill `Assistant.Drive`.
+- **Agent part** (only with ddd-agents installed; classes in `Services\AI`, `Entities\AI`, `Repo\DB\AI`): the drive
+  store behind `agent.drive` (`CloudDriveAgentDriveStoreService`), the mount resolver a host overrides
+  (`DriveSpaceMountResolverService`; by default one own drive per agent space, created on first use and linked in the
+  table `AgentSpaceDriveSpaces`, owned by the agent space's account, `AgentOwnDriveSpaceRightsExtensionService`), the
+  tool package `clouddrive.files` (`CloudDriveMCPPackage`: `driveStatus`, `commitDriveChanges`, `findDriveFiles`,
+  `getDriveFile`, `listDriveFileEvents`, `getDriveSpace`, `organizeDriveFiles`, `createDriveFolder`,
+  `trashDriveFiles`, `restoreDriveFiles`, `rescanDriveFileVersion`, `setDriveSpaceSettings`,
+  `importDriveFileToMediaLibrary`, `showDriveLocation`), the widget `DriveLocation`, the skill `CloudDrive.Files` and
+  the right constant `CloudDriveAccountRights::USE_DRIVE`.
+- **Browser file sink** (with ddd-agents and ddd-agent-browser ≥ 0.2.0): `CloudDriveBrowserFileSinkService`
+  implements the browser's `BrowserFileSink`. Files that leave the browser land in the own drive of the call's agent
+  space in `web/<domain>/` under the renderer's names, through the upload intake: type from the bytes, an allow-list
+  per kind, executable and active content refused, SVG only through the host's `DriveSvgSanitizer` (refused without
+  one), stored untrusted with its origin in the version comment, the token file and the logo wait for the scan. A
+  host with its own sink overrides the class at the same path.
+- **Pull mark** (`DriveWorkingCopiesService::requestPull()`, `isPullRequested()`, `consumePullRequest()`): a writer
+  outside a sandbox (the browser sink, an import) marks the working copy, the sandbox's store pulls at its next call.
+  Cache-held (redis group) for a day; the change feed alone does not do, a file in the scan holds its cursor back.
+- **Changes of a working copy** (`DriveChangesService::findChangesOfWorkingCopy()`): what one working copy changed in
+  its space, newest first, optionally by event type (the nodes it created, to clean up a throwaway working copy).
+- **Media library bridge** (`DriveMediaLibraryBridgeService`): a port from the drive into the host's media library
+  (the drive may call it, never the reverse; media keeps its own storage). Default: no library. A host with one
+  overrides `isMediaLibraryAvailable()` and `importFileIntoMediaLibrary()` at the same path and reads the bytes with
+  `saveReleasedContentToFile()`; the tool `importDriveFileToMediaLibrary` refuses until then.
 
 ## Install
 
@@ -124,12 +143,15 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    scanner implements `DriveMalwareScanner` (autoconfigured) and is named in the setting; `none` releases unscanned
    (development only). The old `malwareScannerCommand` string still works (split into words, never a shell) but is
    deprecated.
-7. With ddd-agents: override `DriveSpaceMountResolverService` (own drive per agent space, further mounts,
-   `findAgentAudienceOfCall()` for an agent that works for a partner, and
-   `findWorkingCopyKeyOfCall()` when the sandbox's workspace key is not on every call; without a key the tools use the
-   own drive's newest working copy) and bind the skill in `config/app/AI/skillPackages.php`:
-   `'Assistant.Drive' => ['clouddrive', 'agent.drive']`. A working copy entry's `conversationKey` is the id of the
-   delegation tree's root conversation.
+7. With ddd-agents: the table `AgentSpaceDriveSpaces` (own drives; without it agent spaces get no own drive and
+   nothing fails), bind the skill in `config/app/AI/skillPackages.php` by class:
+   `'CloudDrive.Files' => [CloudDriveMCPPackage::class, 'agent.drive']`, and gate it with
+   `CloudDriveAccountRights::USE_DRIVE` where the host maps rights. Override `DriveSpaceMountResolverService` for
+   further mounts (e.g. a partner's file area as a shared space), `findOrCreateOwnDriveSpace()` when own drives live
+   elsewhere, `findAgentAudienceOfCall()` for an agent that works for a partner, and `findWorkingCopyKeyOfCall()` when
+   the sandbox's workspace key is not on every call (without a key the tools use the own drive's newest working copy).
+   A working copy entry's `conversationKey` is the id of the delegation tree's root conversation. A partner's file
+   area folds into `CloudDrive.Files`: mount its space, name the mount in the host's skill override.
 
 `app:drive:spaces:create` creates a library space.
 

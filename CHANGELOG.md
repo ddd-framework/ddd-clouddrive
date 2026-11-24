@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.2.0
+
+Breaking for hosts with ddd-agents (a host's `^0.1` constraint does not pull it). What a host renames:
+
+| Before | Now |
+|---|---|
+| `DDD\Domain\CloudDrive\Services\Agents\CloudDriveAgentDriveStoreService` | `DDD\Domain\CloudDrive\Services\AI\CloudDriveAgentDriveStoreService` |
+| `DDD\Domain\CloudDrive\Services\Agents\DriveSpaceMountResolverService` (and a host's same-path subclass `…\Services\Agents\DriveSpaceMountResolverService`) | `DDD\Domain\CloudDrive\Services\AI\DriveSpaceMountResolverService` (the subclass moves to `…\Services\AI\`) |
+| `DDD\Domain\CloudDrive\Services\Agents\Eval\CloudDriveEvalWorkspaceParticipantService` | `DDD\Domain\CloudDrive\Services\AI\Eval\CloudDriveEvalWorkspaceParticipantService` |
+| skill `Assistant.Drive` (`config/app/AI/Skills/Assistant/Drive.md`; a host override at that path) | skill `CloudDrive.Files` (`config/app/AI/Skills/CloudDrive/Files.md`; move the override) |
+| package id `clouddrive` | `clouddrive.files`; bind by class: `'CloudDrive.Files' => [CloudDriveMCPPackage::class, 'agent.drive']` |
+| `Assistant.Drive` in `skillRequirements.php`, `parentSkillNames`, `preloadSkills`, eval fixtures and file names | `CloudDrive.Files` |
+
+No alias: the old names are gone. The drive store's name `clouddrive` in stored widget payloads is unchanged.
+
+- Own drive by default: `DriveSpaceMountResolverService::findOrCreateOwnDriveSpace()` creates one own drive per agent
+  space at its first use (`spaceKind` `agentSpace`, staff audience, owned by the agent space's account) and links it
+  in the new table `AgentSpaceDriveSpaces` (`AgentSpaceDriveSpace`, `AgentSpaceDriveSpacesService`; unique on
+  `agentSpaceId` and on `driveSpaceId`, cascades from both). `findOwnDriveSpace()` finds without creating. Concurrent
+  first calls create one space (a cache lock). Without the table (code before schema) agent spaces get no own drive,
+  nothing fails, the missing table is logged once per process. The agent space's account holds READ, WRITE and MANAGE
+  on its own drives (`AgentOwnDriveSpaceRightsExtensionService`; override at the same path to switch it off). Kind
+  `agentSpace` in `CloudDrive.spaceKinds` (label "Agent drives"). A host whose resolver already links own drives in a
+  table `AgentSpaceDriveSpaces` with these columns drops its own entity, repository and model: the package's reads
+  the same rows.
+- Pull mark: `DriveWorkingCopiesService::requestPull()` marks a working copy for a pull at the sandbox's next call,
+  `isPullRequested()` reads and `consumePullRequest()` takes the mark (cache, redis group, one day; the process keeps
+  its own marks as well). For writers outside the sandbox: the change feed alone does not do, a file in the scan holds
+  the cursor back.
+- `DriveChangesService::findChangesOfWorkingCopy(DriveWorkingCopy, ?eventTypes, limit)`: the changes one working copy
+  made, newest first (e.g. the nodes it created, to clean up a throwaway working copy) — the query a sandbox's drive
+  store built itself.
+- Browser file sink: `CloudDriveBrowserFileSinkService` implements `BrowserFileSink` of ddd-agent-browser ≥ 0.2.0
+  (registers only beside it and ddd-agents). Files land in the own drive of the call's agent space (an eval case's
+  scratch drive) in `web/<domain>/` under the renderer's names, through the upload intake: type from the bytes, an
+  allow-list per kind (design tokens JSON; logo PNG, JPEG, GIF, WebP, SVG; stylesheets CSS; screenshots PNG, JPEG,
+  WebP; fonts WOFF2, WOFF, TTF, OTF), executable and active content refused (programs, PDF, PostScript, Office and ODF
+  containers, HTML, scripts, SVG with scripts or handlers, CSS with script URLs, expressions or bindings), a name that
+  does not fit its bytes refused, SVG stored only through the host's `DriveSvgSanitizer` (refused without one), stored
+  as an upload marked untrusted with its source in the version comment, the token file and the logo wait up to 45 s
+  per call for the scan (a blocked file is refused), then the working copy is marked for a pull. It writes as the
+  signed-in account of the tool call. A host with its own sink overrides the class at the same path.
+- Tools of `clouddrive.files` for a space's file area (what a partner file area skill did): `getDriveSpace` (write
+  lock, quota and use, counts, top-level folders), `listDriveFileEvents` (history of a file or folder),
+  `createDriveFolder`, `rescanDriveFileVersion` (a failed scan again), `setDriveSpaceSettings` (audience write lock,
+  quota, largest file; manage right, asks the owner; `DriveSpacesService::updateSpaceSettings()`). A partner's file area
+  folds into `CloudDrive.Files`: the host mounts its space and names it in its skill override.
+- Media library bridge: `DriveMediaLibraryBridgeService` (a port; Core has no media library logic yet): the default has
+  no library; a host overrides `isMediaLibraryAvailable()` and `importFileIntoMediaLibrary(DriveNode, DriveMediaImport):
+  DriveMediaImportResult` at the same path and reads the bytes with `saveReleasedContentToFile()` (released raster
+  images only, `findImportRefusalReason()`). Tool `importDriveFileToMediaLibrary` (refuses without a library). Media
+  never stores on the drive's object store.
+- `CloudDriveAccountRights::USE_DRIVE` (`useDrive`): the package's right constant for gating `CloudDrive.Files`; nothing
+  checks it in this package yet.
+- Composer: `conflict` with `mgamadeus/ddd-agents <0.1.26` and `mgamadeus/ddd-agent-browser <0.2.0`.
+
+What a host does: apply the schema diff (table `AgentSpaceDriveSpaces`), make the renames above, rebind the skill by
+class, decide on the default own drive (keep it, or override `findOrCreateOwnDriveSpace()`), drop a browser sink of its
+own that does what the package's does, implement the media bridge where it has a media library.
+
 ## 0.1.3
 
 - Every passive text type libmagic names is text: `text/x-objective-c`, `text/x-c`, … (a markup or config file it

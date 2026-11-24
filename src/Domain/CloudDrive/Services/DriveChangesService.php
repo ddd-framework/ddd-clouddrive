@@ -13,6 +13,7 @@ use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEventListItems;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvents;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvent;
 use DDD\Domain\CloudDrive\Repo\DB\Changes\DBDriveChangeEvents;
 use DDD\Infrastructure\Base\DateTime\DateTime;
@@ -162,6 +163,35 @@ class DriveChangesService extends EntitiesService
         if ($excludedWorkingCopyKey !== null) {
             $queryBuilder->andWhere("({$alias}.workingCopyKey IS NULL OR {$alias}.workingCopyKey <> :excludedWorkingCopyKey)")
                 ->setParameter('excludedWorkingCopyKey', $excludedWorkingCopyKey);
+        }
+        $driveChangeEvents = $repoClass->find($queryBuilder, false);
+        return $driveChangeEvents instanceof DriveChangeEvents ? $driveChangeEvents : new DriveChangeEvents();
+    }
+
+    /**
+     * The changes one working copy made in its space (its key on the change), newest first, at most `$limit`; only the
+     * given event types when named (e.g. [DriveChangeEvent::EVENT_CREATED]: the nodes it created, to clean up the
+     * traces of a throwaway working copy).
+     *
+     * @param string[]|null $eventTypes
+     */
+    public function findChangesOfWorkingCopy(DriveWorkingCopy $driveWorkingCopy, ?array $eventTypes = null, int $limit = self::MAX_CHANGES_PER_PAGE): DriveChangeEvents
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+            ->andWhere("{$alias}.workingCopyKey = :workingCopyKey")
+            ->setParameter('driveSpaceId', (int)$driveWorkingCopy->driveSpaceId)
+            ->setParameter('workingCopyKey', (string)$driveWorkingCopy->workingCopyKey)
+            ->orderBy("{$alias}.id", 'DESC')
+            ->setMaxResults(max(1, min(self::MAX_CHANGES_PER_PAGE, $limit)));
+        if ($eventTypes !== null) {
+            $eventTypes = array_values(array_unique(array_map('strval', $eventTypes)));
+            if ($eventTypes === []) {
+                return new DriveChangeEvents();
+            }
+            $queryBuilder->andWhere("{$alias}.eventType IN (:eventTypes)")->setParameter('eventTypes', $eventTypes);
         }
         $driveChangeEvents = $repoClass->find($queryBuilder, false);
         return $driveChangeEvents instanceof DriveChangeEvents ? $driveChangeEvents : new DriveChangeEvents();

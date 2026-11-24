@@ -12,6 +12,13 @@ use Symfony\Component\DependencyInjection\ParameterBag\ParameterBag;
 
 require __DIR__ . '/../vendor/autoload.php';
 
+// the browser's file sink port (ddd-agent-browser ≥ 0.2.0): stand-ins when the package is not installed
+if (!interface_exists('DDD\\Domain\\AI\\Services\\Browser\\BrowserFileSink')) {
+    foreach (['BrowserFileSinkContext', 'BrowserFileToStore', 'BrowserStoredFile', 'BrowserFileSink', 'BrowserFileSinksService'] as $stubClassName) {
+        require __DIR__ . '/Support/AgentBrowser/' . $stubClassName . '.php';
+    }
+}
+
 class CloudDriveTestContainer extends Container
 {
     /** @var object[] Instances by class */

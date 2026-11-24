@@ -215,6 +215,39 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         return null;
     }
 
+    /**
+     * Changes the settings a manager of the space sets: the audience's write lock, the quota and the largest file in
+     * bytes (0 returns to the kind's default; null leaves a setting). Needs the manage right. Answers the stored space.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     */
+    public function updateSpaceSettings(DriveSpace $driveSpace, ?bool $isAudienceWriteLocked, ?int $quotaBytes, ?int $maxFileSizeBytes): DriveSpace
+    {
+        $driveSpace = $this->requireSpaceWithRight((int)$driveSpace->id, DBDriveSpace::RIGHT_MANAGE);
+        if (($quotaBytes !== null && $quotaBytes < 0) || ($maxFileSizeBytes !== null && $maxFileSizeBytes < 0)) {
+            throw new BadRequestException('A quota or a largest file is 0 (the default of the space\'s kind) or more.');
+        }
+        $changedPropertyNames = [];
+        if ($isAudienceWriteLocked !== null) {
+            $driveSpace->isAudienceWriteLocked = $isAudienceWriteLocked;
+            $changedPropertyNames[] = 'isAudienceWriteLocked';
+        }
+        if ($quotaBytes !== null) {
+            $driveSpace->quotaBytes = $quotaBytes > 0 ? $quotaBytes : null;
+            $changedPropertyNames[] = 'quotaBytes';
+        }
+        if ($maxFileSizeBytes !== null) {
+            $driveSpace->maxFileSizeBytes = $maxFileSizeBytes > 0 ? $maxFileSizeBytes : null;
+            $changedPropertyNames[] = 'maxFileSizeBytes';
+        }
+        if ($changedPropertyNames !== []) {
+            $driveSpace->updatePartialIgnoringRights(...$changedPropertyNames);
+        }
+        return $driveSpace;
+    }
+
     /** The throwaway space of an eval case's workspace key, null when there is none */
     public function findSpaceByScratchKey(string $scratchKey): ?DriveSpace
     {

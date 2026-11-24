@@ -18,4 +18,8 @@ return [
         'trashRetentionDays' => 30,
         // optional: the group a space picker lists spaces of this kind under (`label` => 'Libraries')
     ],
+    // the own drive of an agent space (ddd-agents): created on first use by the agent part's mount resolver
+    'agentSpace' => [
+        'label' => 'Agent drives',
+    ],
 ];

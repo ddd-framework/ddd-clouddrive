@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace DDD\Domain\CloudDrive\Services\Agents;
+namespace DDD\Domain\CloudDrive\Services\AI;
 
 use DDD\Domain\AI\Entities\Conversations\Agent\AgentToolCallProvenance;
 use DDD\Domain\AI\Entities\Drives\AgentDriveFile;

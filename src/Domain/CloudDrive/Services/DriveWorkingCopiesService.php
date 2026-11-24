@@ -30,6 +30,7 @@ use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopyEntries;
 use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopyEntry;
 use DDD\Infrastructure\Base\DateTime\DateTime;
+use DDD\Infrastructure\Cache\Cache;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
@@ -53,6 +54,12 @@ class DriveWorkingCopiesService extends EntitiesService
 
     public const int MAX_BASE_MAP_FILES = 50000;
     public const int MAX_STAGED_CHANGES = 1000;
+
+    /** @var int Seconds a pull mark waits for the sandbox's next call */
+    public const int PULL_MARK_TTL_SECONDS = 86400;
+
+    /** @var int[] Pull marks of this process by key (the cache may be missing or slow to show a fresh key) */
+    protected static array $pullMarksInProcess = [];
 
     /** The working copy of a sandbox on a space, created on first use; needs the write right */
     public function findOrCreateWorkingCopy(DriveSpace $driveSpace, string $workingCopyKey): DriveWorkingCopy
@@ -304,6 +311,61 @@ class DriveWorkingCopiesService extends EntitiesService
             $driveWorkingCopyChanges->changedFiles->add($driveWorkingCopyFile);
         }
         return $driveWorkingCopyChanges;
+    }
+
+    /**
+     * Marks the working copy for a pull at the sandbox's next call: a writer outside the sandbox (a browser file sink,
+     * an import) stored files the sandbox should see in the same turn. The change feed alone does not do: a file still
+     * in the malware scan holds the cursor back. The mark lives in the cache (the redis group, shared by the hosts; APCu where no redis is configured) for
+     * a day; the sandbox's store reads it with {@see consumePullRequest()}.
+     */
+    public function requestPull(DriveWorkingCopy $driveWorkingCopy): void
+    {
+        $pullMarkKey = $this->buildPullMarkKey($driveWorkingCopy);
+        static::$pullMarksInProcess[$pullMarkKey] = time();
+        try {
+            Cache::instance(Cache::CACHE_GROUP_REDIS)->set($pullMarkKey, time(), self::PULL_MARK_TTL_SECONDS);
+        } catch (Throwable $cacheException) {
+            DDDService::instance()->getLogger()->warning('[CloudDrive] pull mark not stored in the cache', ['exception' => $cacheException->getMessage()]);
+        }
+    }
+
+    /** Whether a pull is requested for the working copy ({@see requestPull()}); leaves the mark in place */
+    public function isPullRequested(DriveWorkingCopy $driveWorkingCopy): bool
+    {
+        $pullMarkKey = $this->buildPullMarkKey($driveWorkingCopy);
+        if (isset(static::$pullMarksInProcess[$pullMarkKey])) {
+            return true;
+        }
+        try {
+            $pullMark = Cache::instance(Cache::CACHE_GROUP_REDIS)->get($pullMarkKey);
+            return $pullMark !== null && $pullMark !== false;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    /** Whether a pull was requested; removes the mark (the caller pulls now) */
+    public function consumePullRequest(DriveWorkingCopy $driveWorkingCopy): bool
+    {
+        $isPullRequested = $this->isPullRequested($driveWorkingCopy);
+        if (!$isPullRequested) {
+            return false;
+        }
+        $pullMarkKey = $this->buildPullMarkKey($driveWorkingCopy);
+        unset(static::$pullMarksInProcess[$pullMarkKey]);
+        try {
+            Cache::instance(Cache::CACHE_GROUP_REDIS)->delete($pullMarkKey);
+        } catch (Throwable) {
+            // the mark expires with its TTL
+        }
+        return true;
+    }
+
+    /** The cache key of the pull mark: space and working copy key (hashed, a key may hold any character) */
+    public function buildPullMarkKey(DriveWorkingCopy $driveWorkingCopy): string
+    {
+        return 'clouddrive_pull_' . (int)$driveWorkingCopy->driveSpaceId . '_' . sha1((string)$driveWorkingCopy->workingCopyKey);
     }
 
     /** The runner applied the changes up to the cursor */

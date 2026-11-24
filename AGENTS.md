@@ -26,6 +26,15 @@ space's `DriveTypePolicy` (reservation, `DriveVersionsService::writeFile()`, ing
 `DriveActivityEvents`, never as new columns of `DriveChangeEvents` (the change feed must keep working before a host
 applies its schema diff): `DriveActivityEventsService` checks the table once per process and records nothing without it.
 
+## Agent part
+
+Everything that needs ddd-agents lives below `Services\AI\`, `Entities\AI\`, `Repo\DB\AI\` and
+`Presentation\Mcp\Client\CloudDrive\`, keyed in `CloudDriveModule::getNamespacesRequiringClasses()`; the browser sink
+below `Services\AI\Browser\` needs ddd-agent-browser as well. The skill is `CloudDrive.Files`, its package id
+`clouddrive.files` (the skill name in lower case); hosts bind it by class. The drive store's name `clouddrive`
+(`CloudDriveAgentDriveStoreService::STORE_NAME`) is stored in widget payloads and never changes. New tables of the agent
+part degrade: a missing table answers "none" (`AgentSpaceDriveSpacesService::isTableAvailable()`), never an error.
+
 ## Untrusted Input (mandatory)
 
 Every file in a drive, every name, type and size a client sends, and every byte an agent sandbox writes is foreign. It

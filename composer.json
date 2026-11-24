@@ -4,7 +4,7 @@
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/ddd-framework/ddd-clouddrive",
-    "version": "0.1.3",
+    "version": "0.2.0",
     "minimum-stability": "stable",
     "authors": [
         {
@@ -20,8 +20,13 @@
         "phpunit/phpunit": "^9.5",
         "mgamadeus/ddd-agents": "^0.1.29"
     },
+    "conflict": {
+        "mgamadeus/ddd-agents": "<0.1.26",
+        "mgamadeus/ddd-agent-browser": "<0.2.0"
+    },
     "suggest": {
-        "mgamadeus/ddd-agents": "^0.1.26 — mounts drive spaces into the agent workspace and adds the drive tools and widgets (^0.1.29: a scratch drive per eval case)",
+        "mgamadeus/ddd-agents": "^0.1.26 — mounts drive spaces into the agent workspace, an own drive per agent space, the drive tools and widgets (^0.1.29: a scratch drive per eval case)",
+        "mgamadeus/ddd-agent-browser": "^0.2.0 — with ddd-agents: files that leave the agent's browser land in the own drive (CloudDriveBrowserFileSinkService)",
         "async-aws/s3": "The object store of the file bytes (any S3-compatible service)"
     },
     "autoload": {

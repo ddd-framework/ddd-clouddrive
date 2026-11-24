@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace DDD\Domain\CloudDrive\Services\Agents\Eval;
+namespace DDD\Domain\CloudDrive\Services\AI\Eval;
 
 use DDD\Domain\AI\Entities\Evals\AgentEvalScope;
 use DDD\Domain\AI\Entities\Evals\AgentEvalScratchFiles;
