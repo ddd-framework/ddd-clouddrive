@@ -57,6 +57,40 @@ class DriveBlobsService extends EntitiesService
     /** @var string The start of a blob's state reason when the type policy blocked it (not the malware scan) */
     public const string TYPE_POLICY_REFUSAL_PREFIX = DriveBlob::STATE_REASON_TYPE_POLICY_PREFIX;
 
+    /** @var string What libmagic answers for empty content */
+    public const string EMPTY_CONTENT_TYPE = 'application/x-empty';
+
+    /** @var int The first bytes read from the store to tell a stored blob's type */
+    public const int CONTENT_TYPE_DETECTION_HEAD_BYTES = 8192;
+
+    /** @var string[] Text subtypes by extension, used only when the bytes are plain text */
+    public const array TEXT_CONTENT_TYPES_BY_EXTENSION = [
+        'md' => 'text/markdown',
+        'markdown' => 'text/markdown',
+        'txt' => 'text/plain',
+        'log' => 'text/plain',
+        'csv' => 'text/csv',
+        'tsv' => 'text/tab-separated-values',
+        'json' => 'application/json',
+        'ndjson' => 'application/x-ndjson',
+        'jsonl' => 'application/x-ndjson',
+        'yaml' => 'application/yaml',
+        'yml' => 'application/yaml',
+    ];
+
+    /** @var string[] What libmagic answers for a ZIP container whose office format it does not name */
+    public const array ZIP_CONTENT_TYPES = ['application/zip', 'application/x-zip-compressed', 'application/octet-stream+zip'];
+
+    /** @var string[] Office and ODF types by extension, used only when the bytes are a ZIP container */
+    public const array CONTAINER_CONTENT_TYPES_BY_EXTENSION = [
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'odt' => 'application/vnd.oasis.opendocument.text',
+        'ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+        'odp' => 'application/vnd.oasis.opendocument.presentation',
+    ];
+
     /**
      * Reserves an upload into a space: checks the largest file, reserves the bytes against the quota and answers how to
      * send them. Known content (same SHA-256, released in the space) needs no upload.
@@ -233,11 +267,11 @@ class DriveBlobsService extends EntitiesService
             if ($driveTypePolicy !== null && $driveTypePolicy->isRestricted()) {
                 $contentRefusalReason = $driveTypePolicy->findContentRefusalReason(
                     $fileName,
-                    static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType),
+                    static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType, $fileName),
                     static::sniffContentTypeOfFile($temporaryFilePath)
                 );
                 if ($contentRefusalReason !== null) {
-                    $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType);
+                    $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType, $fileName);
                     $driveBlob->state = DriveBlob::STATE_BLOCKED;
                     $driveBlob->stateReason = mb_substr(self::TYPE_POLICY_REFUSAL_PREFIX . $contentRefusalReason, 0, 1000);
                     $driveBlob->expiresAt = null;
@@ -251,7 +285,7 @@ class DriveBlobsService extends EntitiesService
                 $this->markForPurge($driveBlob);
                 return $releasedBlob;
             }
-            $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType);
+            $driveBlob->contentType = static::detectContentTypeOfFile($temporaryFilePath, $driveBlob->contentType, $fileName);
             $driveScanResult = $isScanned ? $this->scanFile($temporaryFilePath) : DriveScanResult::create(DriveScanResult::OUTCOME_CLEAN);
             $driveBlob->state = match ($driveScanResult->outcome) {
                 DriveScanResult::OUTCOME_CLEAN => DriveBlob::STATE_RELEASED,
@@ -330,25 +364,171 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * The content type a blob keeps, from its bytes: an allowed raster image (JPEG, PNG, GIF, WebP, HEIC) gets the type
-     * its magic bytes name; bytes that only claim an image type get `application/octet-stream`; anything else keeps
-     * the declared type (normalised), which is used for attachments only.
+     * The content type a blob keeps, from its bytes ({@see chooseContentTypeFromSniffedType()}): what the ingest of
+     * every write path stores (upload, working-copy commit, agent write, writeFileContent, copies).
      *
      * @param string $filePath server-generated
-     * @param string|null $declaredContentType what the uploader said
+     * @param string|null $declaredContentType what the writer said (never trusted alone)
+     * @param string|null $fileName the file's name (only to tell text subtypes and office formats apart)
      * @return string
      */
-    public static function detectContentTypeOfFile(string $filePath, ?string $declaredContentType): string
+    public static function detectContentTypeOfFile(string $filePath, ?string $declaredContentType, ?string $fileName = null): string
     {
-        $detectedMimeType = RasterImageDecoder::detectMimeType(RasterImageDecoder::readHead($filePath));
-        if ($detectedMimeType !== null) {
-            return $detectedMimeType;
+        $rasterMimeType = RasterImageDecoder::detectMimeType(RasterImageDecoder::readHead($filePath));
+        if ($rasterMimeType !== null) {
+            return $rasterMimeType;
         }
-        $normalizedContentType = UntrustedContentHeaders::normalizeContentType($declaredContentType);
-        if ($normalizedContentType === '' || str_starts_with($normalizedContentType, 'image/')) {
+        return static::chooseContentTypeFromSniffedType(static::sniffContentTypeOfFile($filePath), $declaredContentType, $fileName);
+    }
+
+    /**
+     * The content type of bytes in memory, by the same rule as {@see detectContentTypeOfFile()}: for a host's own write
+     * path that holds the content (or its first bytes) and wants the type the drive would store.
+     *
+     * @param string $bytes the content, or at least its first bytes (a few KB)
+     * @param string|null $fileName the file's name (only to tell text subtypes and office formats apart)
+     * @param string|null $declaredContentType what the writer said (never trusted alone)
+     */
+    public static function detectContentTypeOfBytes(string $bytes, ?string $fileName = null, ?string $declaredContentType = null): string
+    {
+        $rasterMimeType = RasterImageDecoder::detectMimeType($bytes);
+        if ($rasterMimeType !== null) {
+            return $rasterMimeType;
+        }
+        $sniffedContentType = UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        if ($bytes === '') {
+            $sniffedContentType = self::EMPTY_CONTENT_TYPE;
+        } elseif (class_exists(finfo::class)) {
+            $bufferType = (new finfo(FILEINFO_MIME_TYPE))->buffer($bytes);
+            $sniffedContentType = is_string($bufferType) && $bufferType !== '' ? strtolower($bufferType) : UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        }
+        return static::chooseContentTypeFromSniffedType($sniffedContentType, $declaredContentType, $fileName);
+    }
+
+    /**
+     * The type a blob is stored with, decided by the bytes:
+     * - a specific type libmagic reads from the bytes is kept (`application/pdf`, `text/html`, `image/svg+xml`, an
+     *   office type, video, …) — a PDF is a PDF only when its bytes say so;
+     * - plain text is refined by the name's extension to a text subtype (`.md` → `text/markdown`, `.csv`, `.json`, …),
+     *   else by a declared text type, else stays `text/plain`;
+     * - a ZIP container takes the office/ODF type its extension names (`.docx`, `.pptx`, …), else a declared
+     *   `application/vnd.*` type, else stays `application/zip`;
+     * - bytes libmagic cannot name keep a declared `application/*` type (never an image, PDF or text claim), else
+     *   `application/octet-stream`.
+     * The name never makes bytes a PDF, an image or active content.
+     */
+    protected static function chooseContentTypeFromSniffedType(string $sniffedContentType, ?string $declaredContentType, ?string $fileName): string
+    {
+        $sniffedContentType = UntrustedContentHeaders::normalizeContentType($sniffedContentType);
+        if ($sniffedContentType === 'inode/x-empty') {
+            $sniffedContentType = self::EMPTY_CONTENT_TYPE;
+        }
+        $declaredContentType = UntrustedContentHeaders::normalizeContentType($declaredContentType);
+        $extension = strtolower(pathinfo((string)$fileName, PATHINFO_EXTENSION));
+        if ($sniffedContentType === 'text/plain' || $sniffedContentType === self::EMPTY_CONTENT_TYPE) {
+            if (isset(self::TEXT_CONTENT_TYPES_BY_EXTENSION[$extension])) {
+                return self::TEXT_CONTENT_TYPES_BY_EXTENSION[$extension];
+            }
+            if ($sniffedContentType === 'text/plain') {
+                return str_starts_with($declaredContentType, 'text/') ? $declaredContentType : 'text/plain';
+            }
             return UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
         }
-        return $normalizedContentType;
+        if (in_array($sniffedContentType, self::ZIP_CONTENT_TYPES, true)) {
+            if (isset(self::CONTAINER_CONTENT_TYPES_BY_EXTENSION[$extension])) {
+                return self::CONTAINER_CONTENT_TYPES_BY_EXTENSION[$extension];
+            }
+            return str_starts_with($declaredContentType, 'application/vnd.') ? $declaredContentType : 'application/zip';
+        }
+        if ($sniffedContentType === '' || $sniffedContentType === UntrustedContentHeaders::OPAQUE_CONTENT_TYPE) {
+            $isTrustworthyClaim = str_starts_with($declaredContentType, 'application/')
+                && $declaredContentType !== 'application/pdf'
+                && !in_array($declaredContentType, DriveContentGrantsService::TEXT_INLINE_SOURCE_CONTENT_TYPES, true);
+            return $isTrustworthyClaim ? $declaredContentType : UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+        }
+        return $sniffedContentType;
+    }
+
+    /**
+     * Whether a stored type says nothing about the bytes (missing or `application/octet-stream`): such a blob gets its
+     * type from its bytes before it is served ({@see detectAndStoreContentTypeOfStoredBlob()}) or by the backfill.
+     */
+    public static function isContentTypeUnknown(?string $contentType): bool
+    {
+        $normalizedContentType = UntrustedContentHeaders::normalizeContentType($contentType);
+        return $normalizedContentType === '' || $normalizedContentType === UntrustedContentHeaders::OPAQUE_CONTENT_TYPE;
+    }
+
+    /**
+     * The type of a stored blob whose stored type is unknown, from its first bytes (a ranged read), written back to
+     * the blob and to the versions and nodes that show it (only where their own type is unknown too), so the next
+     * grant is cheap. A blob with a known type, or bytes the store cannot give, is returned unchanged.
+     *
+     * @param string|null $fileName a file's name for the blob (text subtypes, office formats)
+     * @param bool $isDryRun detect only, write nothing
+     */
+    public function detectAndStoreContentTypeOfStoredBlob(DriveBlob $driveBlob, ?string $fileName, bool $isDryRun = false): DriveBlob
+    {
+        if (!static::isContentTypeUnknown($driveBlob->contentType)) {
+            return $driveBlob;
+        }
+        $detectedContentType = $this->readContentTypeOfStoredBlob($driveBlob, $fileName);
+        if ($detectedContentType === null || $detectedContentType === UntrustedContentHeaders::normalizeContentType($driveBlob->contentType)) {
+            return $driveBlob;
+        }
+        $driveBlob->contentType = $detectedContentType;
+        if ($isDryRun) {
+            return $driveBlob;
+        }
+        $driveBlob->updatePartialIgnoringRights('contentType');
+        /** @var DriveVersionsService $driveVersionsService */
+        $driveVersionsService = DDDService::instance()->getService(DriveVersionsService::class);
+        $driveVersionsService->applyContentTypeOfBlob($driveBlob);
+        return $driveBlob;
+    }
+
+    /**
+     * The type a stored blob's first bytes name ({@see detectContentTypeOfBytes()}, a ranged read of
+     * {@see CONTENT_TYPE_DETECTION_HEAD_BYTES}); null when the store cannot give the bytes.
+     *
+     * @param string|null $fileName a file's name for the blob (text subtypes, office formats)
+     */
+    public function readContentTypeOfStoredBlob(DriveBlob $driveBlob, ?string $fileName): ?string
+    {
+        if ($driveBlob->storageKey === null || $driveBlob->storageKey === '') {
+            return null;
+        }
+        if ($driveBlob->sizeBytes !== null && (int)$driveBlob->sizeBytes === 0) {
+            return static::detectContentTypeOfBytes('', $fileName, $driveBlob->contentType);
+        }
+        $headLength = (int)$driveBlob->sizeBytes > 0 ? min((int)$driveBlob->sizeBytes, self::CONTENT_TYPE_DETECTION_HEAD_BYTES) : self::CONTENT_TYPE_DETECTION_HEAD_BYTES;
+        try {
+            $headBytes = $this->getObjectStorage()->getObjectContentRange((string)$driveBlob->storageKey, 0, $headLength);
+        } catch (Throwable) {
+            return null;
+        }
+        return $headBytes === null ? null : static::detectContentTypeOfBytes($headBytes, $fileName, $driveBlob->contentType);
+    }
+
+    /**
+     * Blobs whose stored type is unknown (missing or `application/octet-stream`), by id after `$afterDriveBlobId`, for
+     * the content type backfill. Every space (a system job; the caller runs as the CLI account).
+     */
+    public function findBlobsWithUnknownContentType(int $afterDriveBlobId, int $limit, ?int $driveSpaceId = null): DriveBlobs
+    {
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $queryBuilder = $repoClass::createQueryBuilder(true);
+        $alias = $repoClass::getBaseModelAlias();
+        $queryBuilder->andWhere("{$alias}.id > :afterDriveBlobId")->setParameter('afterDriveBlobId', $afterDriveBlobId)
+            ->andWhere("({$alias}.contentType IS NULL OR {$alias}.contentType = '' OR {$alias}.contentType = :opaqueContentType)")
+            ->setParameter('opaqueContentType', UntrustedContentHeaders::OPAQUE_CONTENT_TYPE)
+            ->andWhere("{$alias}.storageKey IS NOT NULL")
+            ->orderBy("{$alias}.id", 'ASC')->setMaxResults(max(1, $limit));
+        if ($driveSpaceId !== null) {
+            $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")->setParameter('driveSpaceId', $driveSpaceId);
+        }
+        $driveBlobs = $repoClass->find($queryBuilder, false);
+        return $driveBlobs instanceof DriveBlobs ? $driveBlobs : new DriveBlobs();
     }
 
     /**

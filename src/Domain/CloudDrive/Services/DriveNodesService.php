@@ -25,6 +25,7 @@ use DDD\Domain\CloudDrive\Exceptions\DriveLocationNotFoundException;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNode;
 use DDD\Domain\CloudDrive\Repo\DB\Nodes\DBDriveNodes;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
+use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersion;
 use DDD\Infrastructure\Base\DateTime\DateTime;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
@@ -1197,5 +1198,45 @@ class DriveNodesService extends EntitiesService
         /** @var DriveWorkingCopiesService $driveWorkingCopiesService */
         $driveWorkingCopiesService = DDDService::instance()->getService(DriveWorkingCopiesService::class);
         return $driveWorkingCopiesService;
+    }
+
+    /**
+     * Gives the files whose current version is on `$driveBlob` the blob's content type where their own type is unknown
+     * (missing or `application/octet-stream`).
+     */
+    public function applyContentTypeOfBlob(DriveBlob $driveBlob): void
+    {
+        if ($driveBlob->id === null || DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
+            return;
+        }
+        $versionModelClass = DBDriveFileVersion::BASE_ORM_MODEL;
+        DBDriveNode::createQueryBuilder()
+            ->update(DBDriveNode::BASE_ORM_MODEL, 'node')
+            ->set('node.contentType', ':contentType')->setParameter('contentType', (string)$driveBlob->contentType)
+            ->where("node.currentVersionId IN (SELECT blobVersion.id FROM {$versionModelClass} blobVersion WHERE blobVersion.driveBlobId = :driveBlobId)")
+            ->setParameter('driveBlobId', (int)$driveBlob->id)
+            ->andWhere("(node.contentType IS NULL OR node.contentType = '' OR node.contentType = :opaqueContentType)")
+            ->setParameter('opaqueContentType', UntrustedContentHeaders::OPAQUE_CONTENT_TYPE)
+            ->getQuery()->execute();
+    }
+
+    /**
+     * The name of a file that has a version on `$driveBlob` (any space, trashed files included), for telling the
+     * blob's type from its bytes; null when no file has one.
+     */
+    public function findFileNameOfBlob(DriveBlob $driveBlob): ?string
+    {
+        if ($driveBlob->id === null) {
+            return null;
+        }
+        $versionModelClass = DBDriveFileVersion::BASE_ORM_MODEL;
+        $nodeAlias = DBDriveNode::getBaseModelAlias();
+        $fileNames = DBDriveNode::createQueryBuilder(true)
+            ->select("{$nodeAlias}.name")
+            ->andWhere("{$nodeAlias}.id IN (SELECT blobVersion.driveNodeId FROM {$versionModelClass} blobVersion WHERE blobVersion.driveBlobId = :driveBlobId)")
+            ->setParameter('driveBlobId', (int)$driveBlob->id)
+            ->setMaxResults(1)
+            ->getQuery()->getSingleColumnResult();
+        return isset($fileNames[0]) && is_string($fileNames[0]) && $fileNames[0] !== '' ? $fileNames[0] : null;
     }
 }

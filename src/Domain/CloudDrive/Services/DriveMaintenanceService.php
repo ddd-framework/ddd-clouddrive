@@ -6,6 +6,7 @@ namespace DDD\Domain\CloudDrive\Services;
 
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlobs;
+use DDD\Domain\CloudDrive\Entities\Blobs\DriveContentTypeBackfillResult;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodeBulkResult;
@@ -599,6 +600,65 @@ class DriveMaintenanceService extends Service
         /** @var DriveNodesService $driveNodesService */
         $driveNodesService = DDDService::instance()->getService(DriveNodesService::class);
         return $driveNodesService;
+    }
+
+    /**
+     * Gives blobs stored without a telling type (missing or `application/octet-stream`; older writes kept only the
+     * writer's claim) the type their first bytes name, and the versions and files on them too. Batched by id, at most
+     * `$limit` blobs per run; idempotent (a blob whose bytes name no more than `application/octet-stream` is left as
+     * it is and counted as unchanged).
+     *
+     * @param int $limit blobs read in this run
+     * @param int|null $driveSpaceId one space only
+     * @param bool $isDryRun read and count, write nothing
+     */
+    public function backfillContentTypes(int $limit = 1000, ?int $driveSpaceId = null, bool $isDryRun = false): DriveContentTypeBackfillResult
+    {
+        // a system job over every space: the rights of the account the console runs as do not narrow it
+        DDDService::instance()->deactivateEntityRightsRestrictions();
+        try {
+            return $this->backfillContentTypesOfAllSpaces($limit, $driveSpaceId, $isDryRun);
+        } finally {
+            DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
+        }
+    }
+
+    protected function backfillContentTypesOfAllSpaces(int $limit, ?int $driveSpaceId, bool $isDryRun): DriveContentTypeBackfillResult
+    {
+        $driveContentTypeBackfillResult = new DriveContentTypeBackfillResult();
+        $driveContentTypeBackfillResult->isDryRun = $isDryRun;
+        $driveBlobsService = $this->getDriveBlobsService();
+        $afterDriveBlobId = 0;
+        $limit = max(1, $limit);
+        while ($driveContentTypeBackfillResult->checkedBlobCount < $limit) {
+            $batchSize = min(self::BATCH_SIZE, $limit - $driveContentTypeBackfillResult->checkedBlobCount);
+            $driveBlobs = $driveBlobsService->findBlobsWithUnknownContentType($afterDriveBlobId, $batchSize, $driveSpaceId);
+            if ($driveBlobs->count() === 0) {
+                return $driveContentTypeBackfillResult;
+            }
+            foreach ($driveBlobs->getElements() as $driveBlob) {
+                $afterDriveBlobId = max($afterDriveBlobId, (int)$driveBlob->id);
+                $driveContentTypeBackfillResult->checkedBlobCount++;
+                $detectedContentType = $driveBlobsService->readContentTypeOfStoredBlob($driveBlob, $this->getDriveNodesService()->findFileNameOfBlob($driveBlob));
+                if ($detectedContentType === null) {
+                    $driveContentTypeBackfillResult->unreadableBlobCount++;
+                    continue;
+                }
+                if (DriveBlobsService::isContentTypeUnknown($detectedContentType)) {
+                    $driveContentTypeBackfillResult->unchangedBlobCount++;
+                    continue;
+                }
+                $driveContentTypeBackfillResult->updatedBlobCount++;
+                $driveContentTypeBackfillResult->detectedContentTypes->countContentType($detectedContentType);
+                if (!$isDryRun) {
+                    $driveBlob->contentType = $detectedContentType;
+                    $driveBlob->updatePartialIgnoringRights('contentType');
+                    $this->getDriveVersionsService()->applyContentTypeOfBlob($driveBlob);
+                }
+            }
+        }
+        $driveContentTypeBackfillResult->hasMore = $driveBlobsService->findBlobsWithUnknownContentType($afterDriveBlobId, 1, $driveSpaceId)->count() > 0;
+        return $driveContentTypeBackfillResult;
     }
 
     protected function getDriveBlobsService(): DriveBlobsService

@@ -27,6 +27,7 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\Services\DDDService;
+use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Throwable;
 
@@ -144,10 +145,14 @@ class DriveVersionsService extends EntitiesService
             $driveFileVersion->updatePartialIgnoringRights('driveBlobId');
         }
         $driveFileVersion->sha256 = $releasedBlob->sha256;
-        $driveFileVersion->updatePartialIgnoringRights('sha256');
+        // the type the ingest read from the bytes replaces what the writer claimed when the version was written
+        $driveFileVersion->contentType = $releasedBlob->contentType;
+        $driveFileVersion->updatePartialIgnoringRights('sha256', 'contentType');
         DBDriveNode::createQueryBuilder()
             ->update(DBDriveNode::BASE_ORM_MODEL, 'node')
             ->set('node.currentVersionId', ':versionId')
+            ->set('node.contentType', ':contentType')
+            ->setParameter('contentType', $releasedBlob->contentType)
             ->set('node.sha256', 'CASE WHEN node.latestVersionId = :versionId THEN :sha256 ELSE node.sha256 END')
             ->where('node.id = :nodeId')
             ->andWhere('(node.currentVersionId IS NULL OR node.currentVersionId < :versionId)')
@@ -161,6 +166,28 @@ class DriveVersionsService extends EntitiesService
             // nothing of the person (the ingest runs as a system job)
             $this->getDriveChangesService()->recordChange($driveNode, DriveChangeEvent::EVENT_RELEASED, (int)$driveFileVersion->id, $this->getDriveNodesService()->buildPath($driveNode), workingCopyKey: $workingCopyKey, onBehalfOfAccountId: $driveFileVersion->onBehalfOfAccountId, actorAccountId: $driveFileVersion->authorAccountId);
         }
+    }
+
+    /**
+     * Gives the versions on a blob the blob's content type where their own type is unknown (missing or
+     * `application/octet-stream`), and the files that show them ({@see DriveNodesService::applyContentTypeOfBlob()}):
+     * after the type of an older blob was read from its bytes.
+     */
+    public function applyContentTypeOfBlob(DriveBlob $driveBlob): void
+    {
+        if ($driveBlob->id === null || DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
+            return;
+        }
+        $repoClass = $this->getEntitySetRepoClassInstance();
+        $alias = $repoClass::getBaseModelAlias();
+        $repoClass::createQueryBuilder()
+            ->update(DBDriveFileVersion::BASE_ORM_MODEL, $alias)
+            ->set("{$alias}.contentType", ':contentType')->setParameter('contentType', (string)$driveBlob->contentType)
+            ->andWhere("{$alias}.driveBlobId = :driveBlobId")->setParameter('driveBlobId', (int)$driveBlob->id)
+            ->andWhere("({$alias}.contentType IS NULL OR {$alias}.contentType = '' OR {$alias}.contentType = :opaqueContentType)")
+            ->setParameter('opaqueContentType', UntrustedContentHeaders::OPAQUE_CONTENT_TYPE)
+            ->getQuery()->execute();
+        $this->getDriveNodesService()->applyContentTypeOfBlob($driveBlob);
     }
 
     /**

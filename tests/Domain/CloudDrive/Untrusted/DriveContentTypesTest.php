@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DDD\Tests\CloudDrive\Domain\CloudDrive\Untrusted;
 
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
+use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveTextMergeService;
 use DDD\Domain\CloudDrive\Entities\Merges\DriveTextMergeResult;
 use PHPUnit\Framework\TestCase;
@@ -22,9 +23,11 @@ class DriveContentTypesTest extends TestCase
             imagepng($gdImage, $filePath);
             $this->assertSame('image/png', DriveBlobsService::detectContentTypeOfFile($filePath, 'text/html'));
             file_put_contents($filePath, '<html><script>alert(1)</script></html>');
-            $this->assertSame('application/octet-stream', DriveBlobsService::detectContentTypeOfFile($filePath, 'image/png'));
+            // the bytes are HTML whatever the writer claims: stored as text/html, which is only ever an attachment
+            $this->assertSame('text/html', DriveBlobsService::detectContentTypeOfFile($filePath, 'image/png'));
             $this->assertSame('text/html', DriveBlobsService::detectContentTypeOfFile($filePath, 'Text/HTML; charset=utf-8'));
-            $this->assertSame('application/octet-stream', DriveBlobsService::detectContentTypeOfFile($filePath, null));
+            $this->assertSame('text/html', DriveBlobsService::detectContentTypeOfFile($filePath, null));
+            $this->assertNull((new DriveContentGrantsService())->resolveInlineContentType('text/html'));
         } finally {
             @unlink($filePath);
         }

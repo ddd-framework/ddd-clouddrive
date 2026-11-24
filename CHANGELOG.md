@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.2
+
+- Content types from the bytes on every write path: the ingest (uploads, working-copy and sandbox commits, agent
+  writes, `writeFileContent()`, copies) stores the type libmagic reads from the bytes (`DriveBlobsService::
+  detectContentTypeOfFile()`, `detectContentTypeOfBytes()` for content in memory). A PDF, text or office file written
+  without a content type was stored as `application/octet-stream` and offered only as a download. The name refines
+  plain text (`.md` → `text/markdown`, `.csv`, `.json`, …) and office formats of a ZIP (`.docx`, `.pptx`, …), never
+  makes bytes a PDF, an image or active content; a writer's claim counts only for bytes libmagic cannot name (an
+  `application/*` type that is no PDF and no text). HTML bytes are stored as `text/html` whatever was claimed (still
+  only an attachment). The release copies the detected type onto the version and the file.
+- A blob stored without a telling type (missing or `application/octet-stream`) gets its type from its first 8 KB
+  when it is first served (`DriveBlobsService::detectAndStoreContentTypeOfStoredBlob()`), and keeps it on the blob,
+  its versions and files: an agent's PDF opens inline.
+- New command `app:drive:backfill-content-types [--dryRun] [--limit=1000] [--driveSpaceId=]`: the same for all such
+  blobs at once, every space, with counts per detected type; repeat while it reports more. Run it once after the
+  update (dry run first).
+- A host's own commit path that stages, uploads and commits through `DriveWorkingCopiesService` gets the detection
+  without a change (it happens in `DriveBlobsService::ingestBlob()`).
+
 ## 0.1.1
 
 - Content: "open" works for PDF and plain texts. The INLINE purpose serves JPEG, PNG, GIF, WebP and PDF in their own

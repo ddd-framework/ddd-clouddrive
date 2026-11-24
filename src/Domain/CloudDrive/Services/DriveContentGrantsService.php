@@ -101,6 +101,11 @@ class DriveContentGrantsService extends Service
                 default => 'The version is not released yet (it waits for its scan).',
             });
         }
+        // a blob stored without a telling type (older writes kept only the writer's claim) gets it from its bytes once
+        // and keeps it: a PDF an agent wrote opens inline like an uploaded one
+        if (DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
+            $driveBlob = $this->getDriveBlobsService()->detectAndStoreContentTypeOfStoredBlob($driveBlob, (string)$driveNode->name);
+        }
         if ($purpose !== DriveContentGrant::PURPOSE_DOWNLOAD && UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === self::SVG_CONTENT_TYPE) {
             $sanitizedSvgGrant = $this->createSanitizedSvgGrant($driveBlob, (string)$driveNode->name, $purpose);
             if ($sanitizedSvgGrant !== null) {
@@ -254,7 +259,11 @@ class DriveContentGrantsService extends Service
                     $driveFileCard->downloadUrl = $downloadGrant->url;
                     $driveFileCard->inlineUrl = $inlineGrant->url;
                     $driveFileCard->urlsExpireAt = $downloadGrant->expiresAt;
-                    if ($inlineGrant->isInline && UntrustedContentHeaders::isInlineContentType($driveNode->contentType)) {
+                    if (DriveBlobsService::isContentTypeUnknown($driveFileCard->contentType) && !DriveBlobsService::isContentTypeUnknown($downloadGrant->contentType)) {
+                        // the type the grant just read from the bytes (stored on the file for the next read)
+                        $driveFileCard->contentType = $downloadGrant->contentType;
+                    }
+                    if ($inlineGrant->isInline && UntrustedContentHeaders::isInlineContentType($driveFileCard->contentType)) {
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {

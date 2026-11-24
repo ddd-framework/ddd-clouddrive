@@ -47,7 +47,12 @@ folders and versioned files whose bytes live in object storage, working copies f
   `application/octet-stream`). Content is served by presigned URLs of the object store, a different origin than the
   application, so a PDF opened there reaches no cookie or session of the application; the store's endpoint must
   never share the application's origin. `resolveInlineContentType()` is the one rule (a host narrows it in a
-  same-path subclass).
+  same-path subclass). The stored type comes from the bytes at the ingest of every write path (upload, working-copy
+  commit, agent write, copies; `DriveBlobsService::detectContentTypeOfFile()` / `detectContentTypeOfBytes()`): a PDF
+  is a PDF only when its bytes say so, the name only tells text subtypes (`.md` → `text/markdown`) and office formats
+  of a ZIP apart, a writer's claim never makes bytes an image, a PDF or text. A blob stored earlier without a telling
+  type (missing or `application/octet-stream`) gets it from its first bytes when it is first served, and keeps it;
+  `app:drive:backfill-content-types [--dryRun] [--limit=1000] [--driveSpaceId=]` does that for all of them at once.
 - **Working copies** (`DriveWorkingCopiesService`): a sandbox saves changes (`stageChanges()`), commits them with a
   compare and swap on each file's newest version (`commitChanges()`), pulls what others changed
   (`findChangesSince()`). A conflict is never overwritten: it stays saved until it is resolved with mine, theirs or
