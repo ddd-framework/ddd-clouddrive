@@ -27,6 +27,9 @@ use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Versions\DBDriveFileVersions;
 use DDD\Domain\CloudDrive\Repo\DB\WorkingCopies\DBDriveWorkingCopyEntry;
 use DDD\Domain\Base\Repo\DB\Doctrine\EntityManagerFactory;
+use DDD\Domain\CloudDrive\MessageHandlers\DriveIngestVersionHandler;
+use DDD\Domain\CloudDrive\MessageHandlers\DriveIngestVersionMessage;
+use DDD\Infrastructure\Cache\Cache;
 use DDD\Infrastructure\Base\DateTime\DateTime;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
@@ -40,12 +43,16 @@ use Throwable;
 /**
  * Housekeeping without rights (a cron or an operator runs it): the trash past its retention, versions beyond the
  * kept ones and their retention, expired system-folder files (`work/`), and the blob sweep — unfinished uploads,
- * unreferenced staged blobs and blobs marked for purge. Every method answers lines of what it did (or would do with
+ * unreferenced staged blobs and blobs marked for purge. Scans never run here: failed scans and lost ingests are
+ * dispatched to the `drive_ingest` worker, so the maintenance cron needs no scanner and little memory. Every method answers lines of what it did (or would do with
  * `$isDryRun`).
  */
 class DriveMaintenanceService extends Service
 {
     public const int BATCH_SIZE = 500;
+
+    /** @var string Cache lock of a version whose ingest the maintenance dispatched (+ the version id) */
+    public const string INGEST_DISPATCH_LOCK_PREFIX = 'clouddrive.maintain.ingest-dispatched.';
 
     /** @var int Batches of BATCH_SIZE access events one maintenance run deletes at most, per table */
     public const int MAX_ACCESS_EVENT_PURGE_BATCHES = 20;
@@ -278,32 +285,35 @@ class DriveMaintenanceService extends Service
     }
 
     /**
-     * Scans blobs again whose scan failed (scanner missing, no signatures) and releases their versions when clean.
+     * Scans blobs again whose scan failed (scanner missing, no signatures): one ingest message per version of such a
+     * blob to the transport `drive_ingest` ({@see dispatchIngestOfVersions()}); the worker scans and releases (or
+     * blocks). No scan runs in the maintenance process. A failed blob without a version is left to the blob sweep.
      *
      * @return string[]
      */
     public function rescanFailedScans(bool $isDryRun): array
     {
+        $failedBlobs = $this->getDriveBlobsService()->findBlobsWithFailedScan(self::BATCH_SIZE);
+        $versionsToRescan = new DriveFileVersions();
         $resultLines = [];
-        foreach ($this->getDriveBlobsService()->findBlobsWithFailedScan(self::BATCH_SIZE)->getElements() as $failedBlob) {
-            if ($isDryRun) {
-                $resultLines[] = sprintf('would scan blob %d of space %d again', (int)$failedBlob->id, (int)$failedBlob->driveSpaceId);
+        foreach ($failedBlobs->getElements() as $failedBlob) {
+            $versionsOfBlob = $this->getDriveVersionsService()->findVersionsOfBlob($failedBlob);
+            if ($versionsOfBlob->count() === 0) {
+                $resultLines[] = sprintf('blob %d of space %d failed its scan and has no version: left to the blob sweep', (int)$failedBlob->id, (int)$failedBlob->driveSpaceId);
                 continue;
             }
-            try {
-                $resultLines[] = sprintf('scanned blob %d again: %s', (int)$failedBlob->id, $this->getDriveVersionsService()->rescanBlob($failedBlob));
-            } catch (Throwable $throwable) {
-                $resultLines[] = sprintf('blob %d could not be scanned again: %s', (int)$failedBlob->id, $throwable->getMessage());
+            foreach ($versionsOfBlob->getElements() as $versionOfBlob) {
+                $versionsToRescan->add($versionOfBlob);
             }
         }
-        return $resultLines;
+        return [...$resultLines, ...$this->dispatchIngestOfVersions($versionsToRescan, 'scan again (its scan failed)', $isDryRun)];
     }
 
     /**
      * Redoes the ingest of versions whose blob still waits (PENDING or STAGED) longer than `staleIngestMinutes`: a worker
-     * run that was lost (retries exhausted, a crash). Runs the ingest here, not in a worker. The age is the blob's last
-     * change, or its creation when no change was stamped (partial writes leave `updated` empty); a second ingest is
-     * harmless.
+     * run that was lost (retries exhausted, a crash). One ingest message per version to the transport `drive_ingest`
+     * ({@see dispatchIngestOfVersions()}), never the ingest in this process. The age is the blob's last change, or its
+     * creation when no change was stamped (partial writes leave `updated` empty); a second ingest is harmless.
      *
      * @return string[]
      */
@@ -320,21 +330,90 @@ class DriveMaintenanceService extends Service
             ->orderBy("{$alias}.id", 'ASC')
             ->setMaxResults(self::BATCH_SIZE);
         $staleVersions = $repoClass->find($queryBuilder, false);
+        return $this->dispatchIngestOfVersions(
+            $staleVersions instanceof DriveFileVersions ? $staleVersions : new DriveFileVersions(),
+            sprintf('ingest again (waiting over %d minutes)', $staleMinutes),
+            $isDryRun
+        );
+    }
+
+    /**
+     * Dispatches one {@see DriveIngestVersionMessage} per version to the transport `drive_ingest` (hash, scan, dedup,
+     * release run in its worker). A version dispatched by an earlier run within `ingestDispatchLockMinutes` (default 60)
+     * is not dispatched again (a cache lock per version that expires on its own: a lost message is dispatched again
+     * after it); a cache without locks dispatches every time (a second ingest is harmless). A failing dispatch is
+     * reported, releases its lock and does not stop the batch. A host that routes the message synchronously runs the
+     * ingest here, in this process (correct, but the scan's memory then counts against the maintenance process).
+     * Answers one line per version and a count.
+     *
+     * @return string[]
+     */
+    public function dispatchIngestOfVersions(DriveFileVersions $driveFileVersions, string $reason, bool $isDryRun): array
+    {
+        $lockSeconds = 60 * max(1, (int)(Config::get('CloudDrive.settings.ingestDispatchLockMinutes') ?? 60));
         $resultLines = [];
-        foreach (($staleVersions instanceof DriveFileVersions ? $staleVersions->getElements() : []) as $staleVersion) {
+        $dispatchedCount = 0;
+        $alreadyQueuedCount = 0;
+        $failedCount = 0;
+        foreach ($driveFileVersions->getElements() as $driveFileVersion) {
+            $versionId = (int)$driveFileVersion->id;
             if ($isDryRun) {
-                $resultLines[] = sprintf('would ingest version %d of node %d again (waiting over %d minutes)', (int)$staleVersion->id, (int)$staleVersion->driveNodeId, $staleMinutes);
+                $resultLines[] = sprintf('would dispatch the ingest of version %d of node %d: %s', $versionId, (int)$driveFileVersion->driveNodeId, $reason);
+                $dispatchedCount++;
+                continue;
+            }
+            $lockToken = $this->acquireIngestDispatchLock($versionId, $lockSeconds);
+            if ($lockToken === false) {
+                $alreadyQueuedCount++;
                 continue;
             }
             try {
-                $staleNode = $this->getDriveNodesService()->find((int)$staleVersion->driveNodeId, false);
-                $this->getDriveVersionsService()->ingestVersion($staleVersion, !($staleNode instanceof DriveNode && $staleNode->isSystem), null, false);
-                $resultLines[] = sprintf('ingested version %d of node %d again', (int)$staleVersion->id, (int)$staleVersion->driveNodeId);
+                $driveNode = $this->getDriveNodesService()->find((int)$driveFileVersion->driveNodeId, false);
+                $this->getDriveVersionsService()->ingestVersion($driveFileVersion, !($driveNode instanceof DriveNode && $driveNode->isSystem), null, true);
+                $resultLines[] = sprintf('dispatched the ingest of version %d of node %d: %s', $versionId, (int)$driveFileVersion->driveNodeId, $reason);
+                $dispatchedCount++;
             } catch (Throwable $throwable) {
-                $resultLines[] = sprintf('version %d could not be ingested again: %s', (int)$staleVersion->id, $throwable->getMessage());
+                $this->releaseIngestDispatchLock($versionId, $lockToken);
+                $resultLines[] = sprintf('the ingest of version %d could not be dispatched: %s', $versionId, $throwable->getMessage());
+                $failedCount++;
             }
         }
+        if ($dispatchedCount + $alreadyQueuedCount + $failedCount > 0) {
+            $resultLines[] = sprintf(
+                '%s %d ingest message(s) to %s (%s), %d already queued, %d failed',
+                $isDryRun ? 'would dispatch' : 'dispatched',
+                $dispatchedCount,
+                DriveIngestVersionHandler::TRANSPORT,
+                $reason,
+                $alreadyQueuedCount,
+                $failedCount
+            );
+        }
         return $resultLines;
+    }
+
+    /**
+     * The dispatch lock of one version's ingest: its token, null when the cache has no locks (dispatch anyway), false
+     * when an earlier run dispatched it within the lock's lifetime.
+     */
+    protected function acquireIngestDispatchLock(int $driveFileVersionId, int $lockSeconds): string|false|null
+    {
+        try {
+            return Cache::instance()->acquireLock(self::INGEST_DISPATCH_LOCK_PREFIX . $driveFileVersionId, $lockSeconds) ?? false;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    protected function releaseIngestDispatchLock(int $driveFileVersionId, ?string $lockToken): void
+    {
+        if ($lockToken === null) {
+            return;
+        }
+        try {
+            Cache::instance()->releaseLock(self::INGEST_DISPATCH_LOCK_PREFIX . $driveFileVersionId, $lockToken);
+        } catch (Throwable) {
+        }
     }
 
     /**

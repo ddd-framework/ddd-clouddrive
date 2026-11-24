@@ -151,11 +151,18 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    app-side bridge that set the version author itself can go. Contracts (autoconfigured):
    `DriveSpaceTransferListener`, `DriveNodeLifecycleListener`, `DriveSvgSanitizer`.
 5. A cron for `app:drive:maintain` (every 15 minutes or hourly): system-folder expiry, trash and version retention,
-   failed scans and lost ingests again (blobs an early release stored BLOCKED after a failed scan are put back first),
-   the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`), and — only with
-   `accessEventRetentionDays` above 0 — the deletion of older accesses (at most 20 × 500 rows per table and run). A scan takes seconds (clamscan loads its signatures each
-   time): with `asyncIngest: true` the ingest runs in a worker — route `DriveIngestVersionMessage` to a transport
-   `drive_ingest` and give it a consumer (worker list).
+   the blob sweep (purged nodes are reported to `DriveNodeLifecycleListener`), the abort of unfinished multipart
+   uploads, and — only with `accessEventRetentionDays` above 0 — the deletion of older accesses (at most 20 × 500 rows
+   per table and run). Failed scans and lost ingests are not redone in the cron: it dispatches one
+   `DriveIngestVersionMessage` per version to the transport `drive_ingest` (blobs an early release stored BLOCKED
+   after a failed scan are put back first) and reports how many; a version it dispatched is not dispatched again
+   within `ingestDispatchLockMinutes` (60, a cache lock; a cache without locks dispatches every run, a second ingest
+   is harmless). So the maintenance cron needs no ClamAV, no scan scratch directory and little memory (a small shared
+   cron runner is enough); the scans run in the `drive_ingest` worker, which needs the scanner, its signatures and
+   about 1.5 GB (clamscan loads its signatures for each scan). Route `DriveIngestVersionMessage` to `drive_ingest` and
+   give it a consumer (worker list) — also with `asyncIngest: false` (uploads ingested in the request), because the
+   maintenance always dispatches. A host that routes the message synchronously (no async transport) stays correct, but
+   then the scans run inside the maintenance process and it needs the scanner and the memory again.
 6. The malware scanner (`CloudDrive.settings.malwareScanner`, default `clamscan` with the limits of the `clamscan`
    block: `binary`, `databaseDirectory`, `maxFileSize`, `maxScanSize`, `maxRecursion`, `maxFiles`, `alertExceedsMax`,
    `alertEncrypted`, `timeoutSeconds`). It fails closed: a scanner that is missing, has no signatures, times out or is

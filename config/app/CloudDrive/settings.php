@@ -47,6 +47,9 @@ return [
     'adminLinkTemplate' => null,
     // the maintenance redoes the ingest of a version whose blob waits longer than this (a lost worker run)
     'staleIngestMinutes' => 15,
+    // app:drive:maintain dispatches rescans and lost ingests to the `drive_ingest` worker, one message per version; a
+    // version it dispatched is not dispatched again for this long (a lost message is sent again after it)
+    'ingestDispatchLockMinutes' => 60,
     // the malware scanner of the ingest, by name (DriveMalwareScanner::getScannerName(), or its class): 'clamscan'
     // (the module's, settings below) or a host's own scanner. Fails closed: an unknown or empty name, a scanner that
     // cannot run or times out leaves the blob SCAN_FAILED (never released; app:drive:maintain scans it again).

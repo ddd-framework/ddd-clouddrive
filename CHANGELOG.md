@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.4
+
+- `app:drive:maintain` no longer scans in its own process: failed scans and lost ingests are dispatched as one
+  `DriveIngestVersionMessage` per version to the transport `drive_ingest` (`DriveMaintenanceService::dispatchIngestOfVersions()`);
+  the output counts the dispatched, already queued and failed messages. A version dispatched within
+  `ingestDispatchLockMinutes` (new setting, 60) is not dispatched again (a cache lock per version; a cache without locks
+  dispatches every run). A failing dispatch is reported and does not stop the batch. The cron keeps the housekeeping
+  (expiry, trash, versions, blob sweep, multipart abort, access retention) and needs no ClamAV and little memory.
+  Hosts: give `drive_ingest` a consumer also with `asyncIngest: false`; a synchronous routing stays correct but runs
+  the scans in the maintenance process again (README, host step 5).
+- `DriveVersionsService::findVersionsOfBlob()`.
+
 ## 0.3.3
 
 - The agent reads documents of the drive: `CloudDriveAgentDriveStoreService` implements ddd-agents'

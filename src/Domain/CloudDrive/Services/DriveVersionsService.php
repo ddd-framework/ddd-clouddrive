@@ -278,16 +278,23 @@ class DriveVersionsService extends EntitiesService
     public function rescanBlob(DriveBlob $driveBlob): string
     {
         $effectiveBlob = $this->getDriveBlobsService()->ingestBlob($driveBlob);
+        foreach ($this->findVersionsOfBlob($driveBlob, $effectiveBlob)->getElements() as $driveFileVersion) {
+            $this->releaseVersion($driveFileVersion, $effectiveBlob);
+        }
+        return (string)$effectiveBlob->state;
+    }
+
+    /** The versions on a blob (and on `$otherDriveBlob`, e.g. the blob a dedup pointed them at), without rights. */
+    public function findVersionsOfBlob(DriveBlob $driveBlob, ?DriveBlob $otherDriveBlob = null): DriveFileVersions
+    {
         $repoClass = $this->getEntitySetRepoClassInstance();
         $queryBuilder = $repoClass::createQueryBuilder(true);
         $alias = $repoClass::getBaseModelAlias();
         $queryBuilder->andWhere("{$alias}.driveBlobId IN (:driveBlobIds)")
-            ->setParameter('driveBlobIds', array_values(array_unique([(int)$driveBlob->id, (int)$effectiveBlob->id])));
+            ->setParameter('driveBlobIds', array_values(array_unique([(int)$driveBlob->id, (int)($otherDriveBlob?->id ?? $driveBlob->id)])))
+            ->orderBy("{$alias}.id", 'ASC');
         $driveFileVersions = $repoClass->find($queryBuilder, false);
-        foreach (($driveFileVersions instanceof DriveFileVersions ? $driveFileVersions->getElements() : []) as $driveFileVersion) {
-            $this->releaseVersion($driveFileVersion, $effectiveBlob);
-        }
-        return (string)$effectiveBlob->state;
+        return $driveFileVersions instanceof DriveFileVersions ? $driveFileVersions : new DriveFileVersions();
     }
 
     /**
