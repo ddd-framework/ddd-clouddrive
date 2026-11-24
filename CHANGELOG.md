@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+- Server messages for a host's text export: `i18n/server-messages.json` lists the 40 messages the drive endpoints answer
+  with, with hints (built and checked by `ddd-server-messages` of mgamadeus/ddd 3.42; CI runs `build --check`). A host
+  merges it with `ddd-server-messages collect` and must not prune these keys. Requires mgamadeus/ddd ^3.42.0.
+- The audience of a file access ("· Staff") is translated by `@mgamadeus/ddd-admin-ui` 0.7.2 (`./files`); a host
+  updates that package.
+
 ## 0.2.1
 
 - A reference `drive/<id>` takes the mount of the node's own space: `organizeDriveFiles` (move, rename, tag,

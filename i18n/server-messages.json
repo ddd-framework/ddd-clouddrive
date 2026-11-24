@@ -1,0 +1,335 @@
+{
+    "generatedBy": "ddd-server-messages build — keys generated from src/, hints written by hand and kept",
+    "format": 1,
+    "package": "mgamadeus/ddd-clouddrive",
+    "scanDirectories": [],
+    "excludedFiles": [
+        "/Services/DriveMediaLibraryBridgeService\\.php$"
+    ],
+    "keys": [
+        {
+            "key": "A drive space needs the audience INTERNAL or SHARED.",
+            "text": "A drive space needs the audience INTERNAL or SHARED.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a space is created with an unknown audience. INTERNAL and SHARED are technical values; keep them unchanged.",
+            "origins": [
+                "DriveSpacesService::createSpace"
+            ]
+        },
+        {
+            "key": "A folder cannot be moved into itself.",
+            "text": "A folder cannot be moved into itself.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a folder is dropped onto itself or one of its own subfolders.",
+            "origins": [
+                "DriveNodesService::moveNode"
+            ]
+        },
+        {
+            "key": "A quota or a largest file is 0 (the default of the space's kind) or more.",
+            "text": "A quota or a largest file is 0 (the default of the space's kind) or more.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the storage limit or the largest-file limit of a space is set to a negative number in its settings.",
+            "origins": [
+                "DriveSpacesService::updateSpaceSettings"
+            ]
+        },
+        {
+            "key": "A transfer moves nodes of exactly one space.",
+            "text": "A transfer moves nodes of exactly one space.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files or folders from several spaces are moved to another space in one step.",
+            "origins": [
+                "DriveSpaceTransfersService::requireTransferSpaces"
+            ]
+        },
+        {
+            "key": "Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.",
+            "text": "Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is opened in an unknown way. DOWNLOAD, INLINE and THUMBNAIL are technical values; keep them unchanged.",
+            "origins": [
+                "DriveContentGrantsService::createContentGrant"
+            ]
+        },
+        {
+            "key": "Folder not found.",
+            "text": "Folder not found.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the opened folder does not exist (anymore) or is not visible to the user.",
+            "origins": [
+                "DriveNodesService::findNodesByListQuery"
+            ]
+        },
+        {
+            "key": "No nodes given.",
+            "text": "No nodes given.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a bulk action (move, trash, restore) is started without any selected file or folder.",
+            "origins": [
+                "DriveNodesService::normalizeBulkNodeIds"
+            ]
+        },
+        {
+            "key": "Only a JPEG, PNG, GIF or WebP image has a thumbnail.",
+            "text": "Only a JPEG, PNG, GIF or WebP image has a thumbnail.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a preview picture is requested for a file that is no picture of these formats.",
+            "origins": [
+                "DriveContentGrantsService::createContentGrant"
+            ]
+        },
+        {
+            "key": "Only a file has content.",
+            "text": "Only a file has content.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a folder is to be opened or downloaded as if it were a file.",
+            "origins": [
+                "DriveContentGrantsService::createContentGrant"
+            ]
+        },
+        {
+            "key": "Only a live file has versions to restore.",
+            "text": "Only a live file has versions to restore.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an older version is to be restored for a file that is in the trash or deleted.",
+            "origins": [
+                "DriveVersionsService::restoreVersion"
+            ]
+        },
+        {
+            "key": "Parent folder not found.",
+            "text": "Parent folder not found.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a new folder is to be created inside a folder that does not exist (anymore).",
+            "origins": [
+                "CloudDriveControllerTrait::createDriveFolder"
+            ]
+        },
+        {
+            "key": "Target folder not found in the target space.",
+            "text": "Target folder not found in the target space.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files are moved to another space but the chosen target folder does not exist there.",
+            "origins": [
+                "CloudDriveControllerTrait::findDriveTransferTargetFolder",
+                "DriveSpaceTransfersService::requireTargetFolder"
+            ]
+        },
+        {
+            "key": "Target folder not found.",
+            "text": "Target folder not found.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files are moved or uploaded into a folder that does not exist (anymore).",
+            "origins": [
+                "CloudDriveControllerTrait::completeDriveUpload",
+                "CloudDriveControllerTrait::moveDriveNodes"
+            ]
+        },
+        {
+            "key": "The file has no released version yet (it waits for its scan).",
+            "text": "The file has no released version yet (it waits for its scan).",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a new file is opened before the malware scan has released it; try again shortly.",
+            "origins": [
+                "DriveContentGrantsService::createContentGrant"
+            ]
+        },
+        {
+            "key": "The root folder cannot be moved or renamed.",
+            "text": "The root folder cannot be moved or renamed.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the top folder of a space is to be moved or renamed.",
+            "origins": [
+                "DriveNodesService::moveNode"
+            ]
+        },
+        {
+            "key": "The root folder cannot be trashed.",
+            "text": "The root folder cannot be trashed.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the top folder of a space is to be moved to the trash.",
+            "origins": [
+                "DriveNodesService::trashNode"
+            ]
+        },
+        {
+            "key": "The size of an upload cannot be negative.",
+            "text": "The size of an upload cannot be negative.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an upload announces a negative file size; a technical error of the uploading client.",
+            "origins": [
+                "DriveBlobsService::reserveUpload"
+            ]
+        },
+        {
+            "key": "The space is full: this upload would exceed its quota.",
+            "text": "The space is full: this upload would exceed its quota.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is uploaded into a space whose storage limit (quota) it would exceed.",
+            "origins": [
+                "DriveBlobsService::reserveUpload"
+            ]
+        },
+        {
+            "key": "The target is no folder of the same space.",
+            "text": "The target is no folder of the same space.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file or folder is moved onto something that is no folder of the same space.",
+            "origins": [
+                "DriveNodesService::moveNode"
+            ]
+        },
+        {
+            "key": "The target is no live folder of this space.",
+            "text": "The target is no live folder of this space.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files are moved into a folder that is in the trash or belongs to another space.",
+            "origins": [
+                "DriveNodesService::moveNodes"
+            ]
+        },
+        {
+            "key": "The target is the same space: move inside it instead.",
+            "text": "The target is the same space: move inside it instead.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files are transferred to another space but the chosen target is the space they are already in.",
+            "origins": [
+                "DriveSpaceTransfersService::requireTransferSpaces"
+            ]
+        },
+        {
+            "key": "The target space is full: the copy would exceed its quota.",
+            "text": "The target space is full: the copy would exceed its quota.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when files are copied into a space whose storage limit (quota) the copy would exceed.",
+            "origins": [
+                "DriveBlobsService::copyBlobIntoSpace"
+            ]
+        },
+        {
+            "key": "The upload belongs to another space, or the target is no folder.",
+            "text": "The upload belongs to another space, or the target is no folder.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an upload is finished into a different space than it was started for, or into something that is no folder.",
+            "origins": [
+                "DriveVersionsService::writeUploadedFile"
+            ]
+        },
+        {
+            "key": "The upload has not arrived in the store yet.",
+            "text": "The upload has not arrived in the store yet.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an upload is finished before its bytes reached the file store; a technical error, try the upload again.",
+            "origins": [
+                "DriveBlobsService::completeUpload"
+            ]
+        },
+        {
+            "key": "Upload not found.",
+            "text": "Upload not found.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an upload is finished or cancelled that the server does not know (anymore).",
+            "origins": [
+                "CloudDriveControllerTrait::completeDriveUpload",
+                "CloudDriveControllerTrait::requireUploadingBlob"
+            ]
+        },
+        {
+            "key": "Version not found.",
+            "text": "Version not found.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an older version of a file is opened or restored that does not exist (anymore).",
+            "origins": [
+                "CloudDriveControllerTrait::getDriveNodeContent",
+                "CloudDriveControllerTrait::restoreDriveFileVersion"
+            ]
+        },
+        {
+            "key": "a name cannot be empty, \".\" or \"..\"",
+            "text": "a name cannot be empty, \".\" or \"..\"",
+            "hint": "Reason why a file or folder name was refused in a drive's file manager; starts lowercase because it follows other text. \".\" and \"..\" stay as they are.",
+            "origins": [
+                "DriveNode::findInvalidNameReason"
+            ]
+        },
+        {
+            "key": "a name cannot contain \"/\" or control characters",
+            "text": "a name cannot contain \"/\" or control characters",
+            "hint": "Reason why a file or folder name was refused in a drive's file manager; starts lowercase because it follows other text. \"/\" stays as it is.",
+            "origins": [
+                "DriveNode::findInvalidNameReason"
+            ]
+        },
+        {
+            "key": "already in the trash",
+            "text": "already in the trash",
+            "hint": "Reason why a drive action on one file was refused; starts lowercase because it follows the file name in a result list (\"<name>: <reason>\"); shown when a file or folder to be moved to the trash is in the trash already.",
+            "origins": [
+                "DriveNodesService::applyBulkActionToNode"
+            ]
+        },
+        {
+            "key": "driveNodeIds are node ids separated by commas.",
+            "text": "driveNodeIds are node ids separated by commas.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the list request carries a malformed id filter; a technical error of the calling client. \"driveNodeIds\" is a parameter name; keep it unchanged.",
+            "origins": [
+                "CloudDriveControllerTrait::buildDriveNodeListQuery"
+            ]
+        },
+        {
+            "key": "it has no released version (it waits for its scan, or the scan blocked it)",
+            "text": "it has no released version (it waits for its scan, or the scan blocked it)",
+            "hint": "Reason why a drive action on one file was refused; starts lowercase because it follows the file name in a result list (\"<name>: <reason>\"); shown when a file is moved to another space before the malware scan has released it, or after the scan blocked it.",
+            "origins": [
+                "DriveSpaceTransfersService::findFileRefusalReason"
+            ]
+        },
+        {
+            "key": "its content is gone",
+            "text": "its content is gone",
+            "hint": "Reason why a drive action on one file was refused; starts lowercase because it follows the file name in a result list (\"<name>: <reason>\"); shown when an older version of a file is restored whose stored content no longer exists.",
+            "origins": [
+                "DriveVersionsService::findRestoreRefusalReason"
+            ]
+        },
+        {
+            "key": "not in the trash",
+            "text": "not in the trash",
+            "hint": "Reason why a drive action on one file was refused; starts lowercase because it follows the file name in a result list (\"<name>: <reason>\"); shown when a file or folder to be restored from the trash is not in the trash.",
+            "origins": [
+                "DriveNodesService::applyBulkActionToNode"
+            ]
+        },
+        {
+            "key": "orderDirection is asc or desc.",
+            "text": "orderDirection is asc or desc.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the list request asks for an unknown sort direction; a technical error. \"orderDirection\", \"asc\" and \"desc\" are technical values; keep them unchanged.",
+            "origins": [
+                "CloudDriveControllerTrait::buildDriveNodeListQuery"
+            ]
+        },
+        {
+            "key": "resolution \"both\" needs a valid file name for your version",
+            "text": "resolution \"both\" needs a valid file name for your version",
+            "hint": "Reason why a conflicting file could not be saved when both versions are to be kept: the name given for the own copy is not valid. \"both\" is a technical value; keep it unchanged. Starts lowercase because it follows other text.",
+            "origins": [
+                "DriveWorkingCopiesService::commitEntry"
+            ]
+        },
+        {
+            "key": "the SVG carries scripts or other active content",
+            "text": "the SVG carries scripts or other active content",
+            "hint": "Reason why an SVG picture the AI assistant's browser captured from a website was not stored on the drive: it holds scripts or other active content, refused for security. Starts lowercase because it follows other text.",
+            "origins": [
+                "CloudDriveBrowserFileSinkService::findRefusalReason"
+            ]
+        },
+        {
+            "key": "the file is empty",
+            "text": "the file is empty",
+            "hint": "Reason why an uploaded or imported picture was refused: the file has no content (0 bytes). Starts lowercase because it can follow other text, e.g. a file name in an import list.",
+            "origins": [
+                "CloudDriveBrowserFileSinkService::findRefusalReason"
+            ]
+        },
+        {
+            "key": "the file name is not a plain name",
+            "text": "the file name is not a plain name",
+            "hint": "Reason why a file the AI assistant's browser captured from a website was not stored on the drive: its file name holds a path, control characters or other unsafe parts. Starts lowercase because it follows other text.",
+            "origins": [
+                "CloudDriveBrowserFileSinkService::findFileNameRefusalReason"
+            ]
+        },
+        {
+            "key": "the stylesheet carries script URLs, expressions or bindings",
+            "text": "the stylesheet carries script URLs, expressions or bindings",
+            "hint": "Reason why a stylesheet (CSS file) the AI assistant's browser captured from a website was not stored on the drive: it holds active content such as script URLs, CSS expressions or bindings, refused for security. Starts lowercase.",
+            "origins": [
+                "CloudDriveBrowserFileSinkService::findRefusalReason"
+            ]
+        },
+        {
+            "key": "trashed with its folder: restore the folder",
+            "text": "trashed with its folder: restore the folder",
+            "hint": "Reason why a drive action on one file was refused; starts lowercase because it follows the file name in a result list (\"<name>: <reason>\"); shown when a file or folder is to be restored on its own although it went to the trash together with its folder; restore that folder instead.",
+            "origins": [
+                "DriveNodesService::applyBulkActionToNode"
+            ]
+        }
+    ]
+}
