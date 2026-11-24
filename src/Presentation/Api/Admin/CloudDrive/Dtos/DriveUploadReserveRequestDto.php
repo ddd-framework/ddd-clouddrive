@@ -7,7 +7,7 @@ namespace DDD\Presentation\Api\Admin\CloudDrive\Dtos;
 use DDD\Presentation\Base\Dtos\RequestDto;
 use DDD\Presentation\Base\OpenApi\Attributes\Parameter;
 
-/** Reserves an upload: size and type of the file; answers one presigned PUT or the parts of a multipart upload. */
+/** Reserves an upload: size and type of the file; answers whether the bytes go in one request or in parts. */
 class DriveUploadReserveRequestDto extends RequestDto
 {
     /** @var int The drive space */

@@ -225,6 +225,8 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
     const [resolve] = api.useResolveDriveLocationMutation();
     resolveTrigger = resolve;
     const [reserveUpload] = api.useReserveDriveUploadMutation();
+    const [putUploadContent] = api.usePutDriveUploadContentMutation();
+    const [putUploadPart] = api.usePutDriveUploadPartMutation();
     const [completeUpload] = api.useCompleteDriveUploadMutation();
     const [requestContent] = api.useDriveContentMutation();
     const [moveNode] = api.useMoveDriveNodeMutation();
@@ -240,12 +242,12 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
     const canManage = space.item?.canManage === true;
 
     const triggers: CloudDriveFileActionTriggers = {
-      reserveUpload, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes,
+      reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes,
       purgeNodes, emptyTrash, restoreVersion,
     };
     return useMemo(
       () => buildCloudDriveFileActions(triggers, { spaceId, rootNodeId, canManage, nodeFacts }),
-      [canManage, rootNodeId, reserveUpload, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion]
+      [canManage, rootNodeId, reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion]
     );
   };
 

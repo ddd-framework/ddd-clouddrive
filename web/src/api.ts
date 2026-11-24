@@ -38,7 +38,11 @@ import type {
   DriveNodesResponse,
   DriveSearchArg,
   DriveSpacesResponse,
+  DriveUploadBytesResponse,
   DriveUploadCompleteArg,
+  DriveUploadContentArg,
+  DriveUploadPartArg,
+  DriveUploadStateArg,
   DriveUploadReservationResponse,
   DriveUploadReserveArg,
   CloudDriveAudience,
@@ -61,8 +65,14 @@ export interface CloudDriveApi {
   useDriveNodeQuery: ApiQueryHook<DriveNodeIdArg, DriveNodeResponse>;
   /** `POST /spaces/{id}/folders`. */
   useCreateDriveFolderMutation: ApiMutationHook<DriveFolderCreateArg, DriveNodeResponse>;
-  /** `POST /spaces/{id}/uploads`: one presigned PUT or the parts of a multipart upload. */
+  /** `POST /spaces/{id}/uploads`: the bytes go in one request or in parts (see `sendDriveUpload`). */
   useReserveDriveUploadMutation: ApiMutationHook<DriveUploadReserveArg, DriveUploadReservationResponse>;
+  /** `PUT /uploads/{blobId}/content`: the whole content of a single-part upload (streamed by the backend). */
+  usePutDriveUploadContentMutation: ApiMutationHook<DriveUploadContentArg, DriveUploadBytesResponse>;
+  /** `PUT /uploads/{blobId}/parts/{partNumber}`: one part of a multipart upload; sending it again replaces it. */
+  usePutDriveUploadPartMutation: ApiMutationHook<DriveUploadPartArg, DriveUploadBytesResponse>;
+  /** `POST /uploads/{blobId}/parts`: the state of a running upload (`uploadedPartNumbers`), to resume it. */
+  useDriveUploadStateMutation: ApiMutationHook<DriveUploadStateArg, DriveUploadReservationResponse>;
   /** `POST /uploads/{blobId}/complete`: the file (a conflict answers `isConflict`). */
   useCompleteDriveUploadMutation: ApiMutationHook<DriveUploadCompleteArg, DriveNodeResponse>;
   /** `GET /nodes/{id}/content?purpose&versionId`: a short-lived content URL (not cached). */
@@ -162,6 +172,15 @@ export const buildCloudDriveRequests = (apiPrefix: string) => {
     reserveUpload: ({ driveSpaceId, ...body }: DriveUploadReserveArg): InjectedRequest => ({
       url: `${prefix}/spaces/${idOf(driveSpaceId)}/uploads`, method: 'POST', body,
     }),
+    putUploadContent: ({ driveBlobId, body }: DriveUploadContentArg): InjectedRequest => ({
+      url: `${prefix}/uploads/${idOf(driveBlobId)}/content`, method: 'PUT', body,
+    }),
+    putUploadPart: ({ driveBlobId, partNumber, body }: DriveUploadPartArg): InjectedRequest => ({
+      url: `${prefix}/uploads/${idOf(driveBlobId)}/parts/${idOf(partNumber)}`, method: 'PUT', body,
+    }),
+    uploadState: ({ driveBlobId }: DriveUploadStateArg): InjectedRequest => ({
+      url: `${prefix}/uploads/${idOf(driveBlobId)}/parts`, method: 'POST', body: {},
+    }),
     completeUpload: ({ driveBlobId, ...body }: DriveUploadCompleteArg): InjectedRequest => ({
       url: `${prefix}/uploads/${idOf(driveBlobId)}/complete`, method: 'POST', body,
     }),
@@ -189,6 +208,9 @@ export const cloudDriveEndpointDefinitions = (apiPrefix: string) => {
     adminUiDriveFileCards: { kind: 'query', request: requests.cards, providesTags: [NODES] },
     adminUiDriveFolderCreate: { kind: 'mutation', request: requests.createFolder, invalidatesTags: [NODES, SPACES] },
     adminUiDriveUploadReserve: { kind: 'mutation', request: requests.reserveUpload },
+    adminUiDriveUploadContent: { kind: 'mutation', request: requests.putUploadContent },
+    adminUiDriveUploadPart: { kind: 'mutation', request: requests.putUploadPart },
+    adminUiDriveUploadState: { kind: 'mutation', request: requests.uploadState },
     adminUiDriveUploadComplete: { kind: 'mutation', request: requests.completeUpload, invalidatesTags: [NODES, SPACES] },
     adminUiDriveContent: { kind: 'mutation', request: requests.content },
     adminUiDriveNodeMove: { kind: 'mutation', request: requests.move, invalidatesTags: [NODES] },
@@ -228,6 +250,9 @@ const injectCloudDriveEndpoints = (baseApi: InjectableBaseApi, apiPrefix: string
     useDriveFileCardsQuery: hookOf('adminUiDriveFileCards') as CloudDriveApi['useDriveFileCardsQuery'],
     useCreateDriveFolderMutation: hookOf('adminUiDriveFolderCreate') as CloudDriveApi['useCreateDriveFolderMutation'],
     useReserveDriveUploadMutation: hookOf('adminUiDriveUploadReserve') as CloudDriveApi['useReserveDriveUploadMutation'],
+    usePutDriveUploadContentMutation: hookOf('adminUiDriveUploadContent') as CloudDriveApi['usePutDriveUploadContentMutation'],
+    usePutDriveUploadPartMutation: hookOf('adminUiDriveUploadPart') as CloudDriveApi['usePutDriveUploadPartMutation'],
+    useDriveUploadStateMutation: hookOf('adminUiDriveUploadState') as CloudDriveApi['useDriveUploadStateMutation'],
     useCompleteDriveUploadMutation: hookOf('adminUiDriveUploadComplete') as CloudDriveApi['useCompleteDriveUploadMutation'],
     useDriveContentMutation: hookOf('adminUiDriveContent') as CloudDriveApi['useDriveContentMutation'],
     useMoveDriveNodeMutation: hookOf('adminUiDriveNodeMove') as CloudDriveApi['useMoveDriveNodeMutation'],
@@ -279,6 +304,9 @@ export const createStaticCloudDriveApi = (data: StaticCloudDriveData): CloudDriv
   useDriveFileCardsQuery: staticQueryHook(arg => data.cards?.(arg)),
   useCreateDriveFolderMutation: staticMutationHook(NOT_AVAILABLE),
   useReserveDriveUploadMutation: staticMutationHook(NOT_AVAILABLE),
+  usePutDriveUploadContentMutation: staticMutationHook(NOT_AVAILABLE),
+  usePutDriveUploadPartMutation: staticMutationHook(NOT_AVAILABLE),
+  useDriveUploadStateMutation: staticMutationHook(NOT_AVAILABLE),
   useCompleteDriveUploadMutation: staticMutationHook(NOT_AVAILABLE),
   useDriveContentMutation: staticMutationHook(NOT_AVAILABLE),
   useMoveDriveNodeMutation: staticMutationHook(NOT_AVAILABLE),

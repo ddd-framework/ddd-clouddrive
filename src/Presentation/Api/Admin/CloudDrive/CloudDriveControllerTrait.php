@@ -14,7 +14,6 @@ use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaces;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
-use DDD\Domain\CloudDrive\Services\DriveActivityEventsService;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
@@ -58,7 +57,10 @@ use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpacesGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceTransferPreviewResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceTransferResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveTrashGetRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadBytesResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadCompleteRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadContentPutRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadPartPutRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadPartsRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadReservationResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveUploadReserveRequestDto;
@@ -66,6 +68,8 @@ use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveVersionRestoreRequestDto;
 use DDD\Presentation\Base\OpenApi\Attributes\Summary;
 use DDD\Presentation\Base\Router\Routes\Get;
 use DDD\Presentation\Base\Router\Routes\Post;
+use DDD\Presentation\Base\Router\Routes\Put;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * The drive screen's backend: spaces, folders, files, uploads (reserve, parts, complete), content URLs, file cards,
@@ -214,8 +218,9 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * Reserves an upload: one presigned PUT, or the parts of a multipart upload. Send every header of a request
-     * unchanged, then complete the upload.
+     * Reserves an upload (quota, type rules): the bytes go to the backend, in one request up to
+     * `transfer.singlePartMaxBytes` (`PUT …/uploads/{driveBlobId}/content`), above in parts of `partSizeBytes`
+     * (`PUT …/uploads/{driveBlobId}/parts/{partNumber}`); then complete the upload.
      *
      * @throws BadRequestException
      * @throws InternalErrorException
@@ -242,7 +247,7 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * New presigned PUTs for parts of a running multipart upload (resume after the URLs expired).
+     * The state of a running upload, to resume it: the parts the store holds already (`uploadedPartNumbers`).
      *
      * @throws NotFoundException
      */
@@ -256,7 +261,67 @@ trait CloudDriveControllerTrait
         $this->prepareCloudDriveAction();
         $driveBlob = $this->requireUploadingBlob($requestDto->driveBlobId, $driveSpacesService, $driveBlobsService);
         $responseDto = new DriveUploadReservationResponseDto();
-        $responseDto->reservation = $driveBlobsService->buildReservation($driveBlob, $requestDto->partNumbers !== [] ? array_map('intval', $requestDto->partNumbers) : null);
+        $responseDto->reservation = $driveBlobsService->buildReservation($driveBlob);
+        return $responseDto;
+    }
+
+    /**
+     * The whole content of a single-part upload, streamed from the request body into the store (never held in
+     * memory). Send `Content-Type: application/octet-stream` and `Content-Length`; a second PUT replaces the first.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws InternalErrorException
+     */
+    #[Put('/uploads/{driveBlobId}/content')]
+    #[Summary('DriveUpload Content')]
+    public function putDriveUploadContent(
+        DriveUploadContentPutRequestDto $requestDto,
+        Request $request,
+        DriveSpacesService $driveSpacesService,
+        DriveBlobsService $driveBlobsService
+    ): DriveUploadBytesResponseDto {
+        $this->prepareCloudDriveAction();
+        $driveBlob = $this->requireUploadingBlob($requestDto->driveBlobId, $driveSpacesService, $driveBlobsService);
+        $contentLength = $this->requireContentLength($request);
+        $driveBlobsService->writeUploadContent($driveBlob, $request->getContent(true), $contentLength);
+        $responseDto = new DriveUploadBytesResponseDto();
+        $responseDto->driveBlobId = (int)$driveBlob->id;
+        $responseDto->sizeBytes = $contentLength;
+        return $responseDto;
+    }
+
+    /**
+     * One part of a multipart upload, streamed from the request body into the store's part (one part per request,
+     * never held in memory). Send `Content-Type: application/octet-stream`, `Content-Length` and optionally
+     * `Content-MD5`; after a stall send the same part again, then complete the upload.
+     *
+     * @throws BadRequestException
+     * @throws NotFoundException
+     * @throws InternalErrorException
+     */
+    #[Put('/uploads/{driveBlobId}/parts/{partNumber}', requirements: ['partNumber' => '\d+'])]
+    #[Summary('DriveUpload Part')]
+    public function putDriveUploadPart(
+        DriveUploadPartPutRequestDto $requestDto,
+        Request $request,
+        DriveSpacesService $driveSpacesService,
+        DriveBlobsService $driveBlobsService
+    ): DriveUploadBytesResponseDto {
+        $this->prepareCloudDriveAction();
+        $driveBlob = $this->requireUploadingBlob($requestDto->driveBlobId, $driveSpacesService, $driveBlobsService);
+        $contentLength = $this->requireContentLength($request);
+        $uploadedPart = $driveBlobsService->writeUploadPart(
+            $driveBlob,
+            $requestDto->partNumber,
+            $request->getContent(true),
+            $contentLength,
+            $request->headers->get('Content-MD5')
+        );
+        $responseDto = new DriveUploadBytesResponseDto();
+        $responseDto->driveBlobId = (int)$driveBlob->id;
+        $responseDto->partNumber = $uploadedPart->partNumber;
+        $responseDto->sizeBytes = (int)($uploadedPart->size ?? $contentLength);
         return $responseDto;
     }
 
@@ -312,7 +377,8 @@ trait CloudDriveControllerTrait
     }
 
     /**
-     * A short-lived URL of a file's released content: DOWNLOAD (the original as an attachment, recorded as DOWNLOADED),
+     * A short-lived URL of the backend (signed token, no `Authorization` header needed: `<img>`, `<video>`, a link)
+     * for a file's released content: DOWNLOAD (the original as an attachment, recorded as DOWNLOADED),
      * INLINE (a preview of JPEG, PNG, GIF, WebP — an SVG only through the host's sanitiser — else an attachment;
      * recorded as VIEWED) or THUMBNAIL (a list's picture, never recorded). The same reader, file, version and kind
      * within `accessEventDedupSeconds` is recorded once.
@@ -338,19 +404,7 @@ trait CloudDriveControllerTrait
         $purpose = strtoupper((string)($requestDto->purpose ?? DriveContentGrant::PURPOSE_DOWNLOAD));
         $responseDto = new DriveContentGrantResponseDto();
         $responseDto->grant = $driveContentGrantsService->createContentGrant($driveNode, $purpose, $driveFileVersion);
-        /** @var DriveSpacesService $driveSpacesService */
-        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
-        /** @var DriveChangesService $driveChangesService */
-        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
-        /** @var DriveActivityEventsService $driveActivityEventsService */
-        $driveActivityEventsService = DDDService::instance()->getService(DriveActivityEventsService::class);
-        // the grant is the logged fact (the bytes go from the store directly); a thumbnail is no access
-        $driveActivityEventsService->recordContentAccess(
-            $driveNode,
-            $responseDto->grant,
-            $driveSpacesService->getCurrentAudience(),
-            $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller()
-        );
+        // the access (VIEWED / DOWNLOADED) is recorded when the URL is fetched (DriveContentStreamsService)
         return $responseDto;
     }
 
@@ -921,6 +975,20 @@ trait CloudDriveControllerTrait
             $responseDto->nextCursor = DriveNodesService::buildOffsetCursor((DriveNodesService::parseOffsetCursor($cursor) ?? $driveNodeListQuery->offset) + $pageSize);
         }
         return $responseDto;
+    }
+
+    /**
+     * The length of a streamed request body (nginx sends it to PHP-FPM after buffering the body)
+     *
+     * @throws BadRequestException
+     */
+    protected function requireContentLength(Request $request): int
+    {
+        $contentLength = $request->headers->get('Content-Length');
+        if ($contentLength === null || !ctype_digit((string)$contentLength)) {
+            throw new BadRequestException('Send the bytes with a Content-Length header.');
+        }
+        return (int)$contentLength;
     }
 
     /**

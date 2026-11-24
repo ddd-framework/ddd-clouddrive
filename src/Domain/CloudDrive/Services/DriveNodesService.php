@@ -698,7 +698,6 @@ class DriveNodesService extends EntitiesService
         /** @var DriveActorNamesService $driveActorNamesService */
         $driveActorNamesService = DDDService::instance()->getService(DriveActorNamesService::class);
         $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($accountIds, $audience);
-        $thumbnailLifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
         /** @var DriveContentGrantsService $driveContentGrantsService */
         $driveContentGrantsService = DDDService::instance()->getService(DriveContentGrantsService::class);
         $driveNodeListItems = new DriveNodeListItems();
@@ -758,7 +757,7 @@ class DriveNodesService extends EntitiesService
             if ($shownBlob !== null && $shownBlob->isReadableByPeople() && UntrustedContentHeaders::isInlineContentType($shownBlob->contentType)
                 && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_THUMBNAIL, $this->getDriveSpacesService()->getCurrentAudience())
             ) {
-                $driveNodeListItem->thumbnailUrl = $this->getDriveBlobsService()->createDownloadRequestUrl($shownBlob, (string)$driveNode->name, false, $thumbnailLifetimeSeconds);
+                $driveNodeListItem->thumbnailUrl = $driveContentGrantsService->createContentUrlOfCheckedVersion((int)$driveNode->id, (int)$shownVersion->id, DriveContentGrant::PURPOSE_THUMBNAIL);
             }
             $driveNodeListItems->add($driveNodeListItem);
         }

@@ -15,6 +15,7 @@ use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpaceUsages;
 use DDD\Domain\CloudDrive\Entities\TypePolicies\DriveTypePolicy;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadPartRequests;
+use DDD\Domain\CloudDrive\Entities\Uploads\DriveTransferSettings;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadRequest;
 use DDD\Domain\CloudDrive\Entities\Uploads\DriveUploadReservation;
 use DDD\Domain\CloudDrive\Repo\DB\Blobs\DBDriveBlob;
@@ -27,6 +28,8 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Libs\Config;
 use DDD\Infrastructure\ObjectStorage\ObjectStorage;
+use DDD\Infrastructure\ObjectStorage\ObjectStorageUploadedPart;
+use DDD\Infrastructure\ObjectStorage\StreamingObjectStorage;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\ObjectStorageService;
 use DDD\Infrastructure\Untrusted\RasterImageDecoder;
@@ -49,6 +52,9 @@ use Throwable;
  */
 class DriveBlobsService extends EntitiesService
 {
+    /** A working copy's runner (presigned, server side) sends uploads from this size in parts */
+    public const int RUNNER_MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024;
+
     public const DEFAULT_ENTITY_CLASS = DriveBlob::class;
 
     public const int MAX_PARTS = 10000;
@@ -98,7 +104,7 @@ class DriveBlobsService extends EntitiesService
      * @throws BadRequestException
      * @throws InternalErrorException
      */
-    public function reserveUpload(DriveSpace $driveSpace, DriveUploadRequest $driveUploadRequest, string $initialState = DriveBlob::STATE_UPLOADING): DriveUploadReservation
+    public function reserveUpload(DriveSpace $driveSpace, DriveUploadRequest $driveUploadRequest, string $initialState = DriveBlob::STATE_UPLOADING, bool $withPresignedRequests = false): DriveUploadReservation
     {
         $sizeBytes = $driveUploadRequest->sizeBytes;
         if ($sizeBytes < 0) {
@@ -117,7 +123,7 @@ class DriveBlobsService extends EntitiesService
         if ($driveUploadRequest->idempotencyKey !== null) {
             $existingBlob = $this->findBlobByIdempotencyKey($driveSpace, $driveUploadRequest->idempotencyKey);
             if ($existingBlob !== null) {
-                return $this->buildReservation($existingBlob);
+                return $this->buildReservation($existingBlob, null, $withPresignedRequests);
             }
         }
         if ($driveUploadRequest->sha256 !== null && preg_match('/^[0-9a-f]{64}$/', $driveUploadRequest->sha256) === 1) {
@@ -147,7 +153,11 @@ class DriveBlobsService extends EntitiesService
             /** @var DriveBlob $driveBlob */
             $driveBlob = $driveBlob->update();
             $driveBlob->storageKey = static::buildStorageKey((int)$driveSpace->id, (int)$driveBlob->id);
-            if ($sizeBytes >= (int)Config::get('CloudDrive.settings.multipartThresholdBytes')) {
+            // a client sends parts above singlePartMaxBytes; the runner keeps its presigned threshold (protocol unchanged)
+            $multipartAboveBytes = $withPresignedRequests
+                ? (int)(Config::get('CloudDrive.settings.multipartThresholdBytes') ?: self::RUNNER_MULTIPART_THRESHOLD_BYTES) - 1
+                : DriveTransferSettings::fromConfig()->singlePartMaxBytes;
+            if ($sizeBytes > $multipartAboveBytes) {
                 $driveBlob->multipartUploadId = $this->getObjectStorage()->createMultipartUpload($driveBlob->storageKey, $driveBlob->contentType);
             }
             $driveBlob->updatePartialIgnoringRights('storageKey', 'multipartUploadId');
@@ -155,11 +165,18 @@ class DriveBlobsService extends EntitiesService
             $this->getDriveSpacesService()->releaseBytes($driveSpace, $sizeBytes);
             throw $throwable;
         }
-        return $this->buildReservation($driveBlob);
+        return $this->buildReservation($driveBlob, null, $withPresignedRequests);
     }
 
-    /** The requests of a reservation (again, e.g. to resume an upload whose URLs expired) */
-    public function buildReservation(DriveBlob $driveBlob, ?array $partNumbers = null): DriveUploadReservation
+    /**
+     * How to send the bytes of a reserved upload (again, e.g. to resume one): a client PUTs them to the backend — the
+     * whole content (`PUT …/uploads/{id}/content`) or each part (`PUT …/uploads/{id}/parts/{partNumber}`); a resumed
+     * multipart upload answers the parts the store holds already (`uploadedPartNumbers`). Presigned requests
+     * (`$withPresignedRequests`) only for a working copy's runner on the server, never for a client.
+     *
+     * @param int[]|null $partNumbers the parts to presign (runner only); null = all
+     */
+    public function buildReservation(DriveBlob $driveBlob, ?array $partNumbers = null, bool $withPresignedRequests = false): DriveUploadReservation
     {
         $driveUploadReservation = new DriveUploadReservation();
         $driveUploadReservation->driveBlobId = (int)$driveBlob->id;
@@ -169,8 +186,11 @@ class DriveBlobsService extends EntitiesService
             return $driveUploadReservation;
         }
         $objectStorage = $this->getObjectStorage();
-        $lifetimeSeconds = (int)Config::get('CloudDrive.settings.uploadUrlLifetimeSeconds');
+        $lifetimeSeconds = max(60, (int)(Config::get('CloudDrive.settings.uploadUrlLifetimeSeconds') ?: 3600));
         if ($driveBlob->multipartUploadId === null) {
+            if (!$withPresignedRequests) {
+                return $driveUploadReservation;
+            }
             $driveUploadReservation->uploadRequest = $objectStorage->createTemporaryUploadRequest(
                 (string)$driveBlob->storageKey,
                 $lifetimeSeconds,
@@ -186,6 +206,13 @@ class DriveBlobsService extends EntitiesService
         $driveUploadReservation->isMultipart = true;
         $driveUploadReservation->partSizeBytes = $partSizeBytes;
         $driveUploadReservation->partCount = $partCount;
+        if (!$withPresignedRequests) {
+            $driveUploadReservation->uploadedPartNumbers = array_map(
+                static fn (ObjectStorageUploadedPart $uploadedPart): int => $uploadedPart->partNumber,
+                $objectStorage->listUploadedParts((string)$driveBlob->storageKey, (string)$driveBlob->multipartUploadId)->getElements()
+            );
+            return $driveUploadReservation;
+        }
         $driveUploadReservation->partRequests = new DriveUploadPartRequests();
         foreach ($partNumbers ?? range(1, $partCount) as $partNumber) {
             if ($partNumber < 1 || $partNumber > $partCount) {
@@ -729,7 +756,9 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
-     * A presigned GET of a blob; the purpose was checked by {@see DriveContentGrantsService}. Inline only for the raster
+     * A presigned GET of a blob for the server side only (a working copy's runner fetches it from the store itself):
+     * people get backend URLs ({@see DriveContentGrantsService::createContentGrant()}). The purpose was checked by
+     * {@see DriveContentGrantsService}. Inline only for the raster
      * allow-list (JPEG, PNG, GIF, WebP) or for the inline type the grant service chose (`$inlineContentType`: a PDF, or
      * a text served as `text/plain; charset=utf-8`); everything else is an attachment, and a type a browser would run
      * (HTML, SVG, XML, JavaScript) is served as `application/octet-stream`. The URL points at the object store's
@@ -748,6 +777,120 @@ class DriveBlobsService extends EntitiesService
         }
         $disposition = UntrustedContentHeaders::buildContentDisposition($isInline, $fileName);
         return $this->getObjectStorage()->createTemporaryUrl((string)$driveBlob->storageKey, $lifetimeSeconds, $contentType, $disposition);
+    }
+
+    /**
+     * Writes the whole content of a single-part upload from a stream (the request body), never into memory; a second
+     * PUT before the completion replaces the first. An announced MD5 is checked against the bytes.
+     *
+     * @param resource $stream
+     * @throws BadRequestException not an open single-part upload, another length, another MD5
+     * @throws InternalErrorException
+     */
+    public function writeUploadContent(DriveBlob $driveBlob, mixed $stream, int $contentLength): void
+    {
+        $this->requireOpenUpload($driveBlob);
+        if ($driveBlob->multipartUploadId !== null) {
+            throw new BadRequestException('This upload is sent in parts: PUT each part to …/parts/{partNumber}.');
+        }
+        if ($contentLength !== (int)$driveBlob->sizeBytes) {
+            throw new BadRequestException(sprintf('The upload has %d bytes; the body has %d.', (int)$driveBlob->sizeBytes, $contentLength));
+        }
+        $stream = static::requireSeekableStream($stream);
+        if ($driveBlob->contentMd5 !== null && $driveBlob->contentMd5 !== '' && !hash_equals($driveBlob->contentMd5, static::calculateBase64Md5OfStream($stream))) {
+            throw new BadRequestException('The body does not match the announced Content-MD5.');
+        }
+        $this->getStreamingObjectStorage()->putObjectFromStream((string)$driveBlob->storageKey, $stream, $contentLength, $driveBlob->contentType);
+    }
+
+    /**
+     * Writes one part of a multipart upload from a stream (the request body) into the store's multipart upload: every
+     * part but the last has `partSizeBytes`, the last the rest. Sending a part again replaces it (resume after a stall).
+     *
+     * @param resource $stream
+     * @throws BadRequestException not an open multipart upload, a part number or length that does not fit
+     * @throws InternalErrorException
+     */
+    public function writeUploadPart(DriveBlob $driveBlob, int $partNumber, mixed $stream, int $contentLength, ?string $contentMd5 = null): ObjectStorageUploadedPart
+    {
+        $this->requireOpenUpload($driveBlob);
+        if ($driveBlob->multipartUploadId === null) {
+            throw new BadRequestException('This upload is sent in one request: PUT the content to …/content.');
+        }
+        $partSizeBytes = $this->findPartSizeBytes((int)$driveBlob->sizeBytes);
+        $partCount = max(1, (int)ceil((int)$driveBlob->sizeBytes / $partSizeBytes));
+        if ($partNumber < 1 || $partNumber > $partCount) {
+            throw new BadRequestException(sprintf('The upload has parts 1 to %d.', $partCount));
+        }
+        $expectedLength = $partNumber < $partCount ? $partSizeBytes : (int)$driveBlob->sizeBytes - ($partCount - 1) * $partSizeBytes;
+        if ($contentLength !== $expectedLength) {
+            throw new BadRequestException(sprintf('Part %d has %d bytes; the body has %d.', $partNumber, $expectedLength, $contentLength));
+        }
+        return $this->getStreamingObjectStorage()->uploadPartFromStream(
+            (string)$driveBlob->storageKey,
+            (string)$driveBlob->multipartUploadId,
+            $partNumber,
+            static::requireSeekableStream($stream),
+            $contentLength,
+            $contentMd5 !== null && $contentMd5 !== '' ? $contentMd5 : null
+        );
+    }
+
+    /**
+     * The store of the file bytes as a streaming store: every byte between a client and the store passes the backend.
+     *
+     * @throws InternalErrorException
+     */
+    public function getStreamingObjectStorage(): StreamingObjectStorage
+    {
+        $objectStorage = $this->getObjectStorage();
+        if (!$objectStorage instanceof StreamingObjectStorage) {
+            throw new InternalErrorException(sprintf('The cloud drive streams its files: the store driver %s must implement %s.', $objectStorage::class, StreamingObjectStorage::class));
+        }
+        return $objectStorage;
+    }
+
+    /**
+     * @throws BadRequestException
+     */
+    protected function requireOpenUpload(DriveBlob $driveBlob): void
+    {
+        if ($driveBlob->state !== DriveBlob::STATE_UPLOADING) {
+            throw new BadRequestException('This upload is complete or gone; reserve a new one.');
+        }
+        $this->getDriveSpacesService()->requireSpaceWithRight((int)$driveBlob->driveSpaceId, DBDriveSpace::RIGHT_WRITE);
+    }
+
+    /**
+     * The stream itself when it can be read twice (a file, `php://temp`, `php://input` under PHP-FPM); otherwise its
+     * bytes copied once into `php://temp` (2 MB in memory, the rest on disk).
+     *
+     * @param resource $stream
+     * @return resource
+     * @throws BadRequestException
+     */
+    public static function requireSeekableStream(mixed $stream): mixed
+    {
+        if (!is_resource($stream)) {
+            throw new BadRequestException('The request has no body.');
+        }
+        if (stream_get_meta_data($stream)['seekable']) {
+            return $stream;
+        }
+        $temporaryStream = fopen('php://temp/maxmemory:2097152', 'r+b');
+        stream_copy_to_stream($stream, $temporaryStream);
+        rewind($temporaryStream);
+        return $temporaryStream;
+    }
+
+    /** @param resource $stream a seekable stream, read from its start and rewound */
+    public static function calculateBase64Md5OfStream(mixed $stream): string
+    {
+        rewind($stream);
+        $hashContext = hash_init('md5');
+        hash_update_stream($hashContext, $stream);
+        rewind($stream);
+        return base64_encode(hash_final($hashContext, true));
     }
 
     public function markFailed(DriveBlob $driveBlob, string $reason): void
@@ -801,7 +944,7 @@ class DriveBlobsService extends EntitiesService
     /** The part size: the configured one, raised so that no upload needs more than 10,000 parts */
     public function findPartSizeBytes(int $sizeBytes): int
     {
-        $configuredPartBytes = max(self::MIN_PART_BYTES, (int)Config::get('CloudDrive.settings.multipartPartBytes'));
+        $configuredPartBytes = max(self::MIN_PART_BYTES, DriveTransferSettings::fromConfig()->partBytes);
         return max($configuredPartBytes, (int)ceil($sizeBytes / self::MAX_PARTS));
     }
 

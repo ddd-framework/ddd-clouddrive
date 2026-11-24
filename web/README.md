@@ -28,8 +28,10 @@ export const cloudDriveApi = createCloudDriveApi({ baseApi: adminApi, apiPrefix:
 
 - The screen's state lives in the URL (`CLOUD_DRIVE_URL_KEYS`: `space`, `path`, `file`, `fileTab`, `tab`, `view`, `q`,
   filters, `sort`; `?node=<id>` opens a node by id).
-- Text and PDF previews fetch the store's presigned download URL from the browser: the bucket's CORS must allow GET from
-  the admin origin. PDF needs the host's `loadPdfJs`.
+- Uploads, previews and downloads go through the backend only (`PUT …/uploads/{id}/content|parts/{n}`, content URLs
+  with a signed token): no URL of the object store reaches the browser and the bucket needs no CORS rule. Text and
+  PDF previews fetch the content URL (same origin as the API, or the host's absolute `transfer.contentUrlPrefix`;
+  no credentials needed). PDF needs the host's `loadPdfJs`.
 - A partner mount: `createCloudDriveApi({ baseApi, apiPrefix: <partner prefix>, audience: 'shared' })`.
 - The texts are the keys of `@mgamadeus/ddd-admin-ui`'s translation store (English keys, the host translates).
 - Tailwind scans the class names in `dist`: add the package to the host's sources

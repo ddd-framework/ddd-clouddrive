@@ -7,13 +7,15 @@ import type { UploadProgressCallbacks } from '@mgamadeus/ddd-admin-ui/files';
 import type { CloudDriveApi } from '../api.ts';
 import { driveFileViewOf, driveFolderIdOf, emptyDriveTrashFully } from './driveFileMapping.ts';
 import type { DriveContentPurpose, DriveNodeListItem, DriveNodeResponse } from '../types.ts';
-import { sendDriveUpload } from './upload.ts';
+import { sendDriveUpload, type DriveUploadSender } from './upload.ts';
 
 type TriggerOf<THook> = THook extends () => readonly [infer TTrigger, unknown] ? TTrigger : never;
 
 /** The mutation triggers the writes call (the first element of each mutation hook). */
 export interface CloudDriveFileActionTriggers {
   reserveUpload: TriggerOf<CloudDriveApi['useReserveDriveUploadMutation']>;
+  putUploadContent: TriggerOf<CloudDriveApi['usePutDriveUploadContentMutation']>;
+  putUploadPart: TriggerOf<CloudDriveApi['usePutDriveUploadPartMutation']>;
   completeUpload: TriggerOf<CloudDriveApi['useCompleteDriveUploadMutation']>;
   requestContent: TriggerOf<CloudDriveApi['useDriveContentMutation']>;
   moveNode: TriggerOf<CloudDriveApi['useMoveDriveNodeMutation']>;
@@ -72,8 +74,17 @@ export const drivePurposeOf = (options: FileDownloadOptions): DriveContentPurpos
       ? 'INLINE'
       : 'DOWNLOAD';
 
+/** The result of a mutation trigger; `signal` aborts its request. */
+const unwrapAbortable = <TResult>(request: { unwrap: () => Promise<TResult>; abort?: () => void }, signal?: AbortSignal): Promise<TResult> => {
+  if (signal) {
+    if (signal.aborted) request.abort?.();
+    else signal.addEventListener('abort', () => request.abort?.(), { once: true });
+  }
+  return request.unwrap();
+};
+
 export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTriggers, context: CloudDriveFileActionContext): FileManagerActions => {
-  const { reserveUpload, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion } = triggers;
+  const { reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion } = triggers;
   const { spaceId, rootNodeId, canManage, nodeFacts } = context;
   const rememberNodes = (items: readonly DriveNodeListItem[]) => rememberDriveNodes(nodeFacts, items);
   const folderNodeIdOf = (folderId: FileItemId | null): number | null => (folderId === null ? rootNodeId : Number(folderId));
@@ -86,6 +97,10 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     rememberNodes([item]);
     return driveFileViewOf(item, rootNodeId);
   };
+  const driveUploadSender: DriveUploadSender = {
+    putContent: (driveBlobId, body, signal) => unwrapAbortable(putUploadContent({ driveBlobId, body }), signal),
+    putPart: (driveBlobId, partNumber, body, signal) => unwrapAbortable(putUploadPart({ driveBlobId, partNumber, body }), signal),
+  };
   const uploadInto = async (
     driveSpaceId: number,
     folderNodeId: number | null,
@@ -94,7 +109,7 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     options: { comment?: string | null; replaceExisting?: boolean }
   ): Promise<FileView> => {
     const { reservation } = await reserveUpload({ driveSpaceId, sizeBytes: file.size, contentType: file.type || null }).unwrap();
-    await sendDriveUpload(reservation, file, (sent, total) => callbacks.onProgress?.(sent, total), callbacks.signal);
+    await sendDriveUpload(reservation, file, driveUploadSender, (sent, total) => callbacks.onProgress?.(sent, total), callbacks.signal);
     const response = await completeUpload({
       driveBlobId: reservation.driveBlobId,
       folderNodeId,

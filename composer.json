@@ -4,7 +4,7 @@
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/ddd-framework/ddd-clouddrive",
-    "version": "0.2.2",
+    "version": "0.3.0",
     "minimum-stability": "stable",
     "authors": [
         {
@@ -14,7 +14,7 @@
     ],
     "require": {
         "php": ">=8.3",
-        "mgamadeus/ddd": "^3.42.0"
+        "mgamadeus/ddd": "^3.43.0"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.5",

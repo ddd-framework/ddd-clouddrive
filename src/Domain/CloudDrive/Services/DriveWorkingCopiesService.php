@@ -190,7 +190,8 @@ class DriveWorkingCopiesService extends EntitiesService
                 $driveUploadRequest->contentType = $driveStagedChange->contentType;
                 $driveUploadRequest->contentMd5 = $driveStagedChange->contentMd5;
                 $driveUploadRequest->sha256 = $driveStagedChange->sha256 !== null ? strtolower($driveStagedChange->sha256) : null;
-                $driveUploadReservation = $this->getDriveBlobsService()->reserveUpload($driveSpace, $driveUploadRequest);
+                // the runner of the working copy sends the bytes from the server: presigned requests
+                $driveUploadReservation = $this->getDriveBlobsService()->reserveUpload($driveSpace, $driveUploadRequest, DriveBlob::STATE_UPLOADING, true);
                 $driveWorkingCopyEntry->stagedDriveBlobId = $driveUploadReservation->driveBlobId;
                 $driveStagedUpload = new DriveStagedUpload();
                 $driveStagedUpload->path = $path;

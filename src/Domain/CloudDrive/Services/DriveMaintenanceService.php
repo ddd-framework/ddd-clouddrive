@@ -32,6 +32,7 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Libs\Config;
+use DDD\Infrastructure\ObjectStorage\StreamingObjectStorage;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
 use Throwable;
@@ -48,6 +49,9 @@ class DriveMaintenanceService extends Service
 
     /** @var int Batches of BATCH_SIZE access events one maintenance run deletes at most, per table */
     public const int MAX_ACCESS_EVENT_PURGE_BATCHES = 20;
+
+    /** @var int Open multipart uploads of the store one maintenance run looks at */
+    public const int MAX_MULTIPART_UPLOADS_PER_SWEEP = 1000;
 
     /** @var int Trashed nodes one empty-trash call purges at most */
     public const int MAX_NODES_PER_EMPTY_TRASH = 200;
@@ -67,6 +71,7 @@ class DriveMaintenanceService extends Service
                 ...$this->rescanFailedScans($isDryRun),
                 ...$this->reingestStaleVersions($isDryRun),
                 ...$this->sweepBlobs($isDryRun),
+                ...$this->abortUnfinishedMultipartUploads($isDryRun),
                 ...$this->purgeAccessEventsBeyondRetention($isDryRun),
             ];
         } finally {
@@ -364,6 +369,38 @@ class DriveMaintenanceService extends Service
                     $this->getDriveBlobsService()->purgeBlob($sweptBlob);
                 } catch (Throwable $throwable) {
                     $resultLines[] = sprintf('blob %d could not be swept: %s', (int)$sweptBlob->id, $throwable->getMessage());
+                }
+            }
+        }
+        return $resultLines;
+    }
+
+    /**
+     * Aborts the multipart uploads of the drive's store that were started more than `unfinishedUploadExpiryHours` ago
+     * and never completed (a client that gave up, a blob swept before): their parts cost storage until they are
+     * aborted. With this sweep a host needs no lifecycle rule on the bucket.
+     *
+     * @return string[]
+     */
+    public function abortUnfinishedMultipartUploads(bool $isDryRun, ?int $now = null): array
+    {
+        $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
+        if (!$objectStorage instanceof StreamingObjectStorage) {
+            return [];
+        }
+        $expiryHours = max(1, (int)(Config::get('CloudDrive.settings.unfinishedUploadExpiryHours') ?: 24));
+        $abortBefore = ($now ?? time()) - 3600 * $expiryHours;
+        $resultLines = [];
+        foreach ($objectStorage->listMultipartUploads('', self::MAX_MULTIPART_UPLOADS_PER_SWEEP)->getElements() as $multipartUpload) {
+            if ($multipartUpload->initiatedAt === null || $multipartUpload->initiatedAt->getTimestamp() >= $abortBefore) {
+                continue;
+            }
+            $resultLines[] = sprintf('%s unfinished multipart upload of %s (started %s)', $isDryRun ? 'would abort' : 'aborted', $multipartUpload->key !== '' ? $multipartUpload->key : $multipartUpload->uploadId, $multipartUpload->initiatedAt->format('Y-m-d H:i'));
+            if (!$isDryRun) {
+                try {
+                    $objectStorage->abortMultipartUpload($multipartUpload->key !== '' ? $multipartUpload->key : 'unknown', $multipartUpload->uploadId);
+                } catch (Throwable $throwable) {
+                    $resultLines[] = sprintf('multipart upload %s could not be aborted: %s', $multipartUpload->uploadId, $throwable->getMessage());
                 }
             }
         }

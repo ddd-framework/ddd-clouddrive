@@ -44,7 +44,7 @@
             "text": "Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is opened in an unknown way. DOWNLOAD, INLINE and THUMBNAIL are technical values; keep them unchanged.",
             "origins": [
-                "DriveContentGrantsService::createContentGrant"
+                "DriveContentGrantsService::resolveContentDelivery"
             ]
         },
         {
@@ -68,7 +68,7 @@
             "text": "Only a JPEG, PNG, GIF or WebP image has a thumbnail.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a preview picture is requested for a file that is no picture of these formats.",
             "origins": [
-                "DriveContentGrantsService::createContentGrant"
+                "DriveContentGrantsService::resolveContentDelivery"
             ]
         },
         {
@@ -76,7 +76,7 @@
             "text": "Only a file has content.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a folder is to be opened or downloaded as if it were a file.",
             "origins": [
-                "DriveContentGrantsService::createContentGrant"
+                "DriveContentGrantsService::resolveContentDelivery"
             ]
         },
         {
@@ -93,6 +93,14 @@
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a new folder is to be created inside a folder that does not exist (anymore).",
             "origins": [
                 "CloudDriveControllerTrait::createDriveFolder"
+            ]
+        },
+        {
+            "key": "Send the bytes with a Content-Length header.",
+            "text": "Send the bytes with a Content-Length header.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when an upload is sent without its length (a fault of the uploading client, not of the user). Content-Length is a technical term; keep it unchanged.",
+            "origins": [
+                "CloudDriveControllerTrait::requireContentLength"
             ]
         },
         {
@@ -114,11 +122,51 @@
             ]
         },
         {
+            "key": "The account of this content link no longer exists.",
+            "text": "The account of this content link no longer exists.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when a download or preview link is opened whose requesting account was deleted meanwhile.",
+            "origins": [
+                "DriveContentStreamsService::enterAccountOfToken"
+            ]
+        },
+        {
+            "key": "The body does not match the announced Content-MD5.",
+            "text": "The body does not match the announced Content-MD5.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when the uploaded bytes differ from the checksum announced before (the file changed or the transfer was damaged; upload it again). Content-MD5 is a technical term; keep it unchanged.",
+            "origins": [
+                "DriveBlobsService::writeUploadContent"
+            ]
+        },
+        {
+            "key": "The content link is invalid or has expired; open the file again.",
+            "text": "The content link is invalid or has expired; open the file again.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when a download or preview link is opened after its short lifetime or was altered; opening the file again creates a new link.",
+            "origins": [
+                "DriveContentStreamsService::createContentStreamResponse"
+            ]
+        },
+        {
             "key": "The file has no released version yet (it waits for its scan).",
             "text": "The file has no released version yet (it waits for its scan).",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a new file is opened before the malware scan has released it; try again shortly.",
             "origins": [
-                "DriveContentGrantsService::createContentGrant"
+                "DriveContentGrantsService::resolveContentDelivery"
+            ]
+        },
+        {
+            "key": "The file of this content link no longer exists.",
+            "text": "The file of this content link no longer exists.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when a download or preview link is opened for a file or version that was deleted meanwhile.",
+            "origins": [
+                "DriveContentStreamsService::resolveDeliveryOfToken"
+            ]
+        },
+        {
+            "key": "The request has no body.",
+            "text": "The request has no body.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when an upload request arrives without any file bytes (a fault of the uploading client).",
+            "origins": [
+                "DriveBlobsService::requireSeekableStream"
             ]
         },
         {
@@ -199,6 +247,30 @@
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an upload is finished before its bytes reached the file store; a technical error, try the upload again.",
             "origins": [
                 "DriveBlobsService::completeUpload"
+            ]
+        },
+        {
+            "key": "This upload is complete or gone; reserve a new one.",
+            "text": "This upload is complete or gone; reserve a new one.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when bytes are sent for an upload that was finished or expired already; the client starts the upload again.",
+            "origins": [
+                "DriveBlobsService::requireOpenUpload"
+            ]
+        },
+        {
+            "key": "This upload is sent in one request: PUT the content to …/content.",
+            "text": "This upload is sent in one request: PUT the content to …/content.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when a small upload is sent in parts although it goes in one request (a fault of the uploading client). PUT and …/content are technical; keep them unchanged.",
+            "origins": [
+                "DriveBlobsService::writeUploadPart"
+            ]
+        },
+        {
+            "key": "This upload is sent in parts: PUT each part to …/parts/{partNumber}.",
+            "text": "This upload is sent in parts: PUT each part to …/parts/{partNumber}.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when a large upload is sent in one request although it goes in parts (a fault of the uploading client). PUT and …/parts/{partNumber} are technical; keep them unchanged.",
+            "origins": [
+                "DriveBlobsService::writeUploadContent"
             ]
         },
         {

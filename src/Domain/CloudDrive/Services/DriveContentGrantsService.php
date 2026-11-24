@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace DDD\Domain\CloudDrive\Services;
 
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
+use DDD\Domain\CloudDrive\Entities\Content\DriveContentDelivery;
 use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
+use DDD\Domain\CloudDrive\Entities\Content\DriveContentToken;
 use DDD\Domain\CloudDrive\Entities\Content\DriveFileCard;
 use DDD\Domain\CloudDrive\Entities\Content\DriveFileCards;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
+use DDD\Domain\CloudDrive\Entities\Uploads\DriveTransferSettings;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
@@ -18,7 +21,7 @@ use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
-use DDD\Infrastructure\Libs\Config;
+use DDD\Infrastructure\Services\AuthService;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
 use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
@@ -28,10 +31,10 @@ use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
  * only released content: DOWNLOAD as attachment; INLINE for JPEG, PNG, GIF, WebP and PDF in their own type and for
  * plain texts (Markdown, CSV, JSON, …) as `text/plain; charset=utf-8` — the type comes from the bytes at ingest;
  * anything else (HTML, SVG, XML, JavaScript, Office, archives) is an attachment even when INLINE is asked
- * ({@see resolveInlineContentType()}). Inline content is served by a presigned URL of the object store, a different
- * origin than the application: a PDF viewer or a text page there reaches no cookie or session of the application,
- * which is why a PDF may open in the browser while HTML or SVG never does (both would run in that origin and could
- * still phish or exfiltrate through it). The store's endpoint must therefore never share the application's origin.
+ * ({@see resolveInlineContentType()}). Every byte is streamed by the backend: the URL is one of the host's content
+ * route with a signed token ({@see DriveContentStreamsService}), with `nosniff`, a server-chosen type and the sandbox
+ * CSP (not on a PDF). HTML and SVG never run in a browser (an SVG only as its sanitised copy); a host that wants
+ * inline PDFs and texts off the application's origin points `transfer.contentUrlPrefix` at another host.
  * A working copy
  * gets its own unreleased content back (WORKSPACE_RESTORE): staged blobs of its entries and pending versions of its
  * space, never downloadable by people.
@@ -65,7 +68,9 @@ class DriveContentGrantsService extends Service
     ];
 
     /**
-     * The content URL of a file's released version (the current one when no version is given).
+     * The content URL of a file's released version (the current one when no version is given): a URL of the backend
+     * with a signed token ({@see DriveContentTokensService}), valid for `CloudDrive.settings.transfer.tokenLifetimeSeconds`;
+     * the rights and the scan state are checked again on every fetch ({@see DriveContentStreamsService}).
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -73,6 +78,70 @@ class DriveContentGrantsService extends Service
      * @throws InternalErrorException
      */
     public function createContentGrant(DriveNode $driveNode, string $purpose = DriveContentGrant::PURPOSE_DOWNLOAD, ?DriveFileVersion $driveFileVersion = null): DriveContentGrant
+    {
+        $driveContentDelivery = $this->resolveContentDelivery($driveNode, $purpose, $driveFileVersion);
+        $driveContentToken = $this->buildContentToken($driveContentDelivery->driveNodeId, $driveContentDelivery->driveFileVersionId, $driveContentDelivery->purpose);
+
+        $driveContentGrant = new DriveContentGrant();
+        $driveContentGrant->purpose = $driveContentDelivery->purpose;
+        $driveContentGrant->url = $this->buildContentUrlOfToken($driveContentToken);
+        $driveContentGrant->expiresAt = DateTime::fromTimestamp($driveContentToken->expiresAt);
+        $driveContentGrant->fileName = $driveContentDelivery->fileName;
+        $driveContentGrant->sizeBytes = $driveContentDelivery->sizeBytes;
+        $driveContentGrant->contentType = $driveContentDelivery->contentType;
+        $driveContentGrant->sha256 = $driveContentDelivery->sha256;
+        $driveContentGrant->isInline = $driveContentDelivery->isInline();
+        $driveContentGrant->driveNodeId = $driveContentDelivery->driveNodeId;
+        $driveContentGrant->driveFileVersionId = $driveContentDelivery->driveFileVersionId;
+        return $driveContentGrant;
+    }
+
+    /**
+     * The content URL of a version the caller checked already (a list's thumbnails: the read right of the space and
+     * the released blob are known); the fetch checks everything again.
+     *
+     * @throws InternalErrorException
+     */
+    public function createContentUrlOfCheckedVersion(int $driveNodeId, int $driveFileVersionId, string $purpose): string
+    {
+        return $this->buildContentUrlOfToken($this->buildContentToken($driveNodeId, $driveFileVersionId, $purpose));
+    }
+
+    /** A token for the current account and audience, valid for `transfer.tokenLifetimeSeconds` */
+    protected function buildContentToken(int $driveNodeId, int $driveFileVersionId, string $purpose): DriveContentToken
+    {
+        $driveContentToken = new DriveContentToken();
+        $driveContentToken->driveNodeId = $driveNodeId;
+        $driveContentToken->driveFileVersionId = $driveFileVersionId;
+        $driveContentToken->purpose = $purpose;
+        $driveContentToken->accountId = $this->findCurrentAccountId();
+        $driveContentToken->audience = $this->getDriveSpacesService()->getCurrentAudience();
+        $driveContentToken->onBehalfOfAccountId = $this->findOnBehalfOfAccountId();
+        $driveContentToken->expiresAt = time() + DriveTransferSettings::fromConfig()->tokenLifetimeSeconds;
+        return $driveContentToken;
+    }
+
+    /**
+     * @throws InternalErrorException without a server secret
+     */
+    protected function buildContentUrlOfToken(DriveContentToken $driveContentToken): string
+    {
+        $driveContentTokensService = $this->getDriveContentTokensService();
+        return $driveContentTokensService->buildContentUrl($driveContentTokensService->createToken($driveContentToken));
+    }
+
+    /**
+     * Checks that the current caller may read a file's released version for `$purpose` and answers what to serve:
+     * the read right on the space, the variant rule, a released blob (never one waiting for or refused by its scan),
+     * the inline type (raster, PDF, plain text, an SVG only as its sanitised copy; everything else an attachment).
+     * Called when a grant is made and again on every fetch of its URL.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     * @throws InternalErrorException
+     */
+    public function resolveContentDelivery(DriveNode $driveNode, string $purpose, ?DriveFileVersion $driveFileVersion = null): DriveContentDelivery
     {
         if (!in_array($purpose, DriveContentGrant::PEOPLE_PURPOSES, true)) {
             throw new BadRequestException('Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.');
@@ -106,24 +175,30 @@ class DriveContentGrantsService extends Service
         if (DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
             $driveBlob = $this->getDriveBlobsService()->detectAndStoreContentTypeOfStoredBlob($driveBlob, (string)$driveNode->name);
         }
+        $driveContentDelivery = new DriveContentDelivery();
+        $driveContentDelivery->driveNodeId = (int)$driveNode->id;
+        $driveContentDelivery->driveFileVersionId = (int)$driveFileVersion->id;
+        $driveContentDelivery->purpose = $purpose;
+        $driveContentDelivery->storageKey = (string)$driveBlob->storageKey;
+        $driveContentDelivery->fileName = (string)$driveNode->name;
+        $driveContentDelivery->sizeBytes = (int)$driveBlob->sizeBytes;
+        $driveContentDelivery->contentType = $driveBlob->contentType;
+        $driveContentDelivery->sha256 = $driveBlob->sha256;
         if ($purpose !== DriveContentGrant::PURPOSE_DOWNLOAD && UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === self::SVG_CONTENT_TYPE) {
-            $sanitizedSvgGrant = $this->createSanitizedSvgGrant($driveBlob, (string)$driveNode->name, $purpose);
-            if ($sanitizedSvgGrant !== null) {
-                $sanitizedSvgGrant->driveNodeId = (int)$driveNode->id;
-                $sanitizedSvgGrant->driveFileVersionId = (int)$driveFileVersion->id;
-                return $sanitizedSvgGrant;
+            $sanitizedStorageKey = $this->ensureSanitizedSvgCopy($driveBlob);
+            if ($sanitizedStorageKey !== null) {
+                $driveContentDelivery->storageKey = $sanitizedStorageKey;
+                $driveContentDelivery->sizeBytes = null;
+                $driveContentDelivery->contentType = self::SVG_CONTENT_TYPE;
+                $driveContentDelivery->inlineContentType = self::SVG_CONTENT_TYPE;
+                return $driveContentDelivery;
             }
         }
-        $isRasterImage = UntrustedContentHeaders::isInlineContentType($driveBlob->contentType);
-        if ($purpose === DriveContentGrant::PURPOSE_THUMBNAIL && !$isRasterImage) {
+        if ($purpose === DriveContentGrant::PURPOSE_THUMBNAIL && !UntrustedContentHeaders::isInlineContentType($driveBlob->contentType)) {
             throw new BadRequestException('Only a JPEG, PNG, GIF or WebP image has a thumbnail.');
         }
-        $asAttachment = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD
-            || $this->resolveInlineContentType($driveBlob->contentType) === null;
-        $driveContentGrant = $this->buildGrant($driveBlob, (string)$driveNode->name, $purpose, $asAttachment);
-        $driveContentGrant->driveNodeId = (int)$driveNode->id;
-        $driveContentGrant->driveFileVersionId = (int)$driveFileVersion->id;
-        return $driveContentGrant;
+        $driveContentDelivery->inlineContentType = $purpose === DriveContentGrant::PURPOSE_DOWNLOAD ? null : $this->resolveInlineContentType($driveBlob->contentType);
+        return $driveContentDelivery;
     }
 
     /**
@@ -162,18 +237,17 @@ class DriveContentGrantsService extends Service
     }
 
     /**
-     * The inline grant of an SVG's sanitised copy ({@see DriveSvgSanitizer}), made once per blob and kept next to it;
-     * null without a sanitiser or when the SVG cannot be made safe (it stays an attachment).
+     * The key of an SVG's sanitised copy ({@see DriveSvgSanitizer}), made once per blob and kept next to it; null
+     * without a sanitiser or when the SVG cannot be made safe (it stays an attachment).
      */
-    protected function createSanitizedSvgGrant(DriveBlob $driveBlob, string $fileName, string $purpose): ?DriveContentGrant
+    protected function ensureSanitizedSvgCopy(DriveBlob $driveBlob): ?string
     {
         /** @var DriveSvgSanitizersService $driveSvgSanitizersService */
         $driveSvgSanitizersService = DDDService::instance()->getService(DriveSvgSanitizersService::class);
         if (!$driveSvgSanitizersService->hasSvgSanitizer() || (int)$driveBlob->sizeBytes > DriveSvgSanitizersService::MAX_SVG_BYTES) {
             return null;
         }
-        $driveBlobsService = $this->getDriveBlobsService();
-        $objectStorage = $driveBlobsService->getObjectStorage();
+        $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
         $sanitizedStorageKey = DriveBlobsService::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey);
         if (!$objectStorage->objectExists($sanitizedStorageKey)) {
             $svgBytes = $objectStorage->getObjectContent((string)$driveBlob->storageKey);
@@ -183,21 +257,7 @@ class DriveContentGrantsService extends Service
             }
             $objectStorage->putObjectIfAbsent($sanitizedStorageKey, $sanitizedSvg, self::SVG_CONTENT_TYPE);
         }
-        $lifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
-        $driveContentGrant = new DriveContentGrant();
-        $driveContentGrant->purpose = $purpose;
-        $driveContentGrant->url = $objectStorage->createTemporaryUrl(
-            $sanitizedStorageKey,
-            $lifetimeSeconds,
-            self::SVG_CONTENT_TYPE,
-            UntrustedContentHeaders::buildContentDisposition(true, $fileName)
-        );
-        $driveContentGrant->expiresAt = DateTime::fromTimestamp(time() + $lifetimeSeconds);
-        $driveContentGrant->fileName = $fileName;
-        $driveContentGrant->contentType = self::SVG_CONTENT_TYPE;
-        $driveContentGrant->sha256 = $driveBlob->sha256;
-        $driveContentGrant->isInline = true;
-        return $driveContentGrant;
+        return $sanitizedStorageKey;
     }
 
     /**
@@ -275,9 +335,13 @@ class DriveContentGrantsService extends Service
         return $driveFileCards;
     }
 
+    /**
+     * A presigned GET for the runner of a working copy (server side: the sandbox fetches the bytes from the store
+     * itself); never handed to a browser.
+     */
     protected function buildGrant(DriveBlob $driveBlob, string $fileName, string $purpose, bool $asAttachment): DriveContentGrant
     {
-        $lifetimeSeconds = max(30, (int)Config::get('CloudDrive.settings.downloadUrlLifetimeSeconds'));
+        $lifetimeSeconds = DriveTransferSettings::fromConfig()->tokenLifetimeSeconds;
         $driveContentGrant = new DriveContentGrant();
         $driveContentGrant->purpose = $purpose;
         $inlineContentType = $asAttachment ? null : $this->resolveInlineContentType($driveBlob->contentType);
@@ -289,6 +353,29 @@ class DriveContentGrantsService extends Service
         $driveContentGrant->sha256 = $driveBlob->sha256;
         $driveContentGrant->isInline = $inlineContentType !== null;
         return $driveContentGrant;
+    }
+
+    /** The signed-in account a content token is made for; null without one (a command, a job) */
+    protected function findCurrentAccountId(): ?int
+    {
+        $accountId = AuthService::instance()->getAccount()?->id;
+        return $accountId !== null ? (int)$accountId : null;
+    }
+
+    /** The account an agent acts for (recorded with the access) */
+    protected function findOnBehalfOfAccountId(): ?int
+    {
+        /** @var DriveChangesService $driveChangesService */
+        $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
+        $onBehalfOfAccountId = $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
+        return $onBehalfOfAccountId !== null ? (int)$onBehalfOfAccountId : null;
+    }
+
+    protected function getDriveContentTokensService(): DriveContentTokensService
+    {
+        /** @var DriveContentTokensService $driveContentTokensService */
+        $driveContentTokensService = DDDService::instance()->getService(DriveContentTokensService::class);
+        return $driveContentTokensService;
     }
 
     protected function getDriveSpacesService(): DriveSpacesService

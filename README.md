@@ -38,15 +38,19 @@ folders and versioned files whose bytes live in object storage, working copies f
   application's links), purge notifications (`DriveNodeLifecycleListener`).
 - **Files**: folders, files, versions (`DriveFileVersion`) and blobs (`DriveBlob`). Names are case-sensitive and
   unique per folder; trash and restore; tags and descriptions; a change feed (`DriveChangeEvent`).
-- **Bytes**: direct presigned upload and download, PHP never proxies bytes. Every object is written once: a key per
-  blob, `If-None-Match: *` signed into each PUT, multipart uploads completed only by the server onto a free key,
-  `Content-MD5` verified by the store. The ingest computes the SHA-256, takes the content type from the bytes, scans,
+- **Bytes**: every byte between a client and the store goes through the backend — no URL of the store ever reaches
+  a browser, the bucket needs no CORS rule and no lifecycle rule, and any S3-compatible store can sit behind it.
+  Uploads are streamed from the request body into the store (one request up to `transfer.singlePartMaxBytes`, above
+  in resumable parts of `transfer.partBytes`, one part per request, never a whole part in memory); downloads,
+  previews and thumbnails are streamed from the store (ranges, ETag) under a signed, short-lived URL. Every object is
+  written once: a key per blob, multipart uploads completed only by the server onto a free key, an announced MD5
+  checked. The ingest computes the SHA-256, takes the content type from the bytes, scans,
   deduplicates per space and releases or blocks. People read only released content (`DriveContentGrantsService`):
   inline only for JPEG, PNG, GIF, WebP and PDF in their own type and for plain texts (Markdown, CSV, JSON, …) as
   `text/plain; charset=utf-8`; everything else as an attachment (HTML, SVG, XML, JavaScript as
-  `application/octet-stream`). Content is served by presigned URLs of the object store, a different origin than the
-  application, so a PDF opened there reaches no cookie or session of the application; the store's endpoint must
-  never share the application's origin. `resolveInlineContentType()` is the one rule (a host narrows it in a
+  `application/octet-stream`), always with `nosniff` and the sandbox CSP (not on a PDF); an SVG is shown only as its
+  sanitised copy. A host that wants inline PDFs and texts off the application's origin mounts the content route on
+  another host and sets `transfer.contentUrlPrefix` to its absolute URL. `resolveInlineContentType()` is the one rule (a host narrows it in a
   same-path subclass). The stored type comes from the bytes at the ingest of every write path (upload, working-copy
   commit, agent write, copies; `DriveBlobsService::detectContentTypeOfFile()` / `detectContentTypeOfBytes()`): a PDF
   is a PDF only when its bytes say so, the name only tells text subtypes (`.md` → `text/markdown`) and office formats
@@ -88,13 +92,27 @@ folders and versioned files whose bytes live in object storage, working copies f
 composer require mgamadeus/ddd-clouddrive async-aws/s3
 ```
 
-1. An object store named `clouddrive` (`config/app/Common/ObjectStorage.php`, `OBJECT_STORAGE_CLOUDDRIVE_*`). A store
-   that ignores `If-None-Match` on PUT sets `conditionalWrites: false`. Bucket CORS for the app origins; a lifecycle
-   rule that aborts unfinished multipart uploads.
+1. An object store named `clouddrive` (`config/app/Common/ObjectStorage.php`, `OBJECT_STORAGE_CLOUDDRIVE_*`), driver
+   `s3` or `filesystem` (both stream; a host driver must implement `StreamingObjectStorage` of mgamadeus/ddd ≥ 3.43).
+   Only the backend talks to it: no bucket CORS, no public access, no lifecycle rule (`app:drive:maintain` aborts
+   unfinished multipart uploads after `unfinishedUploadExpiryHours`). A store that ignores `If-None-Match` on PUT sets
+   `conditionalWrites: false`. The content URLs are signed with `CLOUDDRIVE_CONTENT_TOKEN_SECRET` (else `APP_SECRET`;
+   at least 16 characters).
 2. The tables: generate the models (`app:generate-doctrine-models-for-entities`) and apply the schema diff.
 3. The host's rights as one or more `DriveSpaceRightsExtension` services (no `DriveSpace` subclass, see Rights), and
    its own mapping of records to spaces (a host table with `driveSpaceId`).
-4. The REST endpoints: one controller with `use CloudDriveControllerTrait;` (`#[Route('/common/cloudDrive')]`).
+4. The content route, **without authentication** (the signed token in the URL is the authorisation; rights and scan
+   state are checked again on every fetch, revoked rights answer 403): one controller with
+   `use CloudDriveContentControllerTrait;` answering on `/api/public/drive/content` (in an application whose public
+   controllers are prefixed `/api/public`: `#[Route('/drive/content')]`), or set
+   `CloudDrive.settings.transfer.contentUrlPrefix` to the full path it answers on — an absolute URL when the frontend
+   runs on another origin than the API. `GET|HEAD …/{token}` answers 200, 206 for one `Range`, 304 for `If-None-Match`, 403
+   for an expired or revoked link; the fetch records the access (VIEWED / DOWNLOADED, deduplicated).
+   The REST endpoints: one controller with `use CloudDriveControllerTrait;` (`#[Route('/common/cloudDrive')]`).
+   Uploads: `POST …/spaces/{id}/uploads` (reserve), then `PUT …/uploads/{blobId}/content` (whole body) or
+   `PUT …/uploads/{blobId}/parts/{partNumber}` (each part, `Content-Type: application/octet-stream`,
+   `Content-Length`, optional `Content-MD5`; a part sent again replaces it), `POST …/uploads/{blobId}/parts` (the
+   parts the store holds, to resume), `POST …/uploads/{blobId}/complete`.
    `POST …/cards` hydrates the `DriveFiles` widget with short-lived open, download and thumbnail URLs. It is a POST
    (the references are a body) but only reads: a host write guard that classifies routes by method lets it through
    like a GET. `GET …/nodes/{id}` answers `ancestors` (root first) for breadcrumbs and deep links. For a file
@@ -163,6 +181,31 @@ Evals (ddd-agents ≥ 0.1.29): every case gets a throwaway own drive seeded from
 read-only during the case — for every write tool, whether it names the file by path or by `drive/<id>`; the refusal
 tells the model to copy into the own drive — and the space is erased at the end (`--keepWorkspace` keeps it). A case
 that exercises the write tools on a shared space works on a copy in its own drive.
+
+## Host requirements (uploads and downloads through the backend)
+
+One request carries at most one part, so the limits below hold for any file size. Defaults: `transfer.partBytes` and
+`transfer.singlePartMaxBytes` 16 MB, `tokenLifetimeSeconds` 600, `streamChunkBytes` 1 MB.
+
+- **Part size** — keep `partBytes` (and `singlePartMaxBytes`) below every body limit on the path: the web server's
+  `client_max_body_size`, PHP's `post_max_size` and `upload_max_filesize`, and well below `memory_limit` (the body is
+  never held in memory, but stay clear of it). A store needs parts of at least 5 MB; at most 10,000 parts per file, so
+  the largest file is 10,000 × `partBytes` (160 GB at 16 MB; the part size grows for larger files).
+- **Memory** — one part is in flight per upload and never held twice: PHP streams `php://input` (nginx's buffered temp
+  file) into the store; the s3 driver spools a part once to `php://temp` (2 MB in memory, the rest on disk) to sign
+  it. A 16 MB part stays far below a `memory_limit` of 128M.
+- **nginx** — `client_max_body_size` above the part size (e.g. `20m` for 16 MB parts); `client_body_timeout` cuts a
+  client that sends nothing for that long (default 60 s): the client sends the part again and completes at the end;
+  `fastcgi_request_buffering on` (default) buffers the body before PHP starts, and `fastcgi_read_timeout` (e.g.
+  300 s) then has to cover the store's upload of one part. Downloads: the backend sends `X-Accel-Buffering: no` and
+  flushes per chunk; `fastcgi_buffering off;` on the content route does the same; no gzip on it.
+- **PHP-FPM** — `post_max_size` and `upload_max_filesize` above the part size; `max_execution_time` 0 (FPM default)
+  or above the longest download a client may need: a large file streams for as long as the client reads.
+- **Reverse proxy / load balancer** (Traefik, …) — a read timeout that covers one part's request (Traefik
+  `readTimeout` counts the whole request including the body, e.g. 600 s), `writeTimeout` 0 or above the longest
+  download, an idle timeout above the pauses of a slow client; no buffering middleware on the content route.
+- **Origins** — content URLs are relative to `transfer.contentUrlPrefix`; a frontend on another origin than the API
+  gets an absolute prefix. No cookie or `Authorization` header is needed for them (`<img>`, `<video>`, links).
 
 ## Frontend
 

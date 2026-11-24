@@ -228,8 +228,10 @@ describe('drive file actions', () => {
   const bulk = { result: { processedCount: 1, fileCount: 1, folderCount: 0, hasMore: false } };
   const triggers = {
     reserveUpload: trigger('reserveUpload', {}),
+    putUploadContent: trigger('putUploadContent', {}),
+    putUploadPart: trigger('putUploadPart', {}),
     completeUpload: trigger('completeUpload', {}),
-    requestContent: trigger('requestContent', { grant: { url: 'https://store/x', fileName: 'x.pdf', purpose: 'DOWNLOAD' } }),
+    requestContent: trigger('requestContent', { grant: { url: '/api/public/drive/content/token.signature', fileName: 'x.pdf', purpose: 'DOWNLOAD' } }),
     moveNode: trigger('moveNode', {}),
     updateMetadata: trigger('updateMetadata', {}),
     createFolder: trigger('createFolder', { driveNode: { id: 12, driveSpaceId: 3, parentNodeId: ROOT, nodeType: 'FOLDER', name: 'New' }, path: '/New' }),
@@ -259,7 +261,7 @@ describe('drive file actions', () => {
     assert.deepEqual(calls.at(-1), { name: 'moveNodes', arg: { driveSpaceId: 3, driveNodeIds: [41, 42], targetFolderNodeId: ROOT } });
     assert.deepEqual(await actions.deleteFolder(12), { trashedFiles: 2, deletedFolders: 1 });
     const download = await actions.getDownload(41, { disposition: 'inline' });
-    assert.equal(download.url, 'https://store/x');
+    assert.equal(download.url, '/api/public/drive/content/token.signature');
     assert.deepEqual(calls.at(-1), { name: 'requestContent', arg: { driveNodeId: 41, purpose: 'INLINE', versionId: null } });
     await actions.patchFile(41, { description: 'Q1' });
     assert.deepEqual(calls.at(-1), { name: 'updateMetadata', arg: { driveNodeId: 41, description: 'Q1' } });

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.0
+
+Every byte goes through the backend; no presigned URL reaches a client any more (no compatibility mode).
+
+- Downloads, previews, thumbnails: the grant (`GET …/nodes/{id}/content`, file cards, list thumbnails) answers a
+  backend URL with a signed token (HMAC over node, version, purpose, account, audience and expiry;
+  `CLOUDDRIVE_CONTENT_TOKEN_SECRET`, else `APP_SECRET`). The new `CloudDriveContentControllerTrait` serves it, streamed
+  from the store (Range/206/416, ETag/304, `X-Accel-Buffering: no`), and checks the rights, the variant rule and the
+  scan state again on every fetch (revoked → 403). The access (VIEWED / DOWNLOADED, deduplicated) is recorded at the
+  fetch, no longer at the grant.
+- Uploads: `PUT …/uploads/{id}/content` (up to `transfer.singlePartMaxBytes`) and `PUT …/uploads/{id}/parts/{n}`
+  (above, parts of `transfer.partBytes`, a part sent again replaces it), streamed from the request body into the store;
+  `POST …/uploads/{id}/parts` now answers `uploadedPartNumbers` (resume) instead of presigned requests. The
+  reservation no longer carries `uploadRequest` / `partRequests` for clients (only a working copy's runner on the
+  server still gets presigned requests). Quota reservation, MD5 / size checks, completion and ingest are unchanged.
+- `CloudDrive.settings.transfer`: `partBytes`, `singlePartMaxBytes`, `tokenLifetimeSeconds`, `streamChunkBytes`,
+  `contentUrlPrefix` (defaults in code; `multipartPartBytes` and `downloadUrlLifetimeSeconds` are still read when
+  `transfer` does not set the value; `multipartThresholdBytes` is gone — above `singlePartMaxBytes`, 16 MB, an upload
+  goes in parts).
+- `app:drive:maintain` aborts multipart uploads of the store unfinished beyond `unfinishedUploadExpiryHours`.
+- npm `@mgamadeus/ddd-clouddrive` 0.3.0: `sendDriveUpload(reservation, file, sender, onProgress, signal)` sends to the
+  backend (one part in flight, stored parts skipped, a failed part retried), new hooks
+  `usePutDriveUploadContentMutation`, `usePutDriveUploadPartMutation`, `useDriveUploadStateMutation`; the types
+  `DrivePresignedRequest` / `DriveUploadPartRequest` are gone.
+- Hosts: mount `CloudDriveContentControllerTrait` on a path without authentication (default
+  `/api/public/drive/content`), set the secret, apply the limits of README › "Host requirements" (nginx, PHP-FPM,
+  proxy), remove the bucket's CORS and multipart lifecycle rules if you like. Requires mgamadeus/ddd ^3.43.0.
+
 ## 0.2.2
 
 - Server messages for a host's text export: `i18n/server-messages.json` lists the 40 messages the drive endpoints answer

@@ -1,6 +1,6 @@
 {
   "name": "@mgamadeus/ddd-clouddrive",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "React frontend of the cloud drive for backends built with mgamadeus/ddd (Composer package mgamadeus/ddd-clouddrive): the RTK Query client of the drive routes, the drive screen on the file manager of @mgamadeus/ddd-admin-ui (spaces, folders, upload, versions, trash, activity, URL state) and the source of the DriveFiles cards of @mgamadeus/ddd-agents.",
   "keywords": [
     "ddd",

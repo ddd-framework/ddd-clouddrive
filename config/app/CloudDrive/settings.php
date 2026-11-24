@@ -8,12 +8,24 @@ declare(strict_types=1);
 return [
     // the object store of the file bytes (Common.ObjectStorage stores, OBJECT_STORAGE_CLOUDDRIVE_*)
     'objectStorageName' => 'clouddrive',
-    // lifetime of a presigned upload or download in seconds
+    // every byte between a client and the store goes through the backend (no presigned URL reaches a client, the
+    // bucket needs no CORS rule and no lifecycle rule); host limits: README › "Host requirements"
+    'transfer' => [
+        // one request carries one part: keep it below post_max_size, client_max_body_size and memory_limit
+        'partBytes' => 16 * 1024 * 1024,
+        // an upload up to this size goes in one request (PUT …/uploads/{id}/content), a larger one in parts
+        'singlePartMaxBytes' => 16 * 1024 * 1024,
+        // lifetime of a content URL (download, preview, thumbnail); rights and scan state are checked on every fetch
+        'tokenLifetimeSeconds' => 600,
+        // a download is streamed in chunks of this size, each flushed
+        'streamChunkBytes' => 1024 * 1024,
+        // where the host mounted CloudDriveContentControllerTrait (public: the URL carries a signed token)
+        'contentUrlPrefix' => '/api/public/drive/content',
+    ],
+    // the presigned requests of a working copy's runner (server side, never a client): their lifetime and the size from
+    // which the runner sends an upload in parts
     'uploadUrlLifetimeSeconds' => 3600,
-    'downloadUrlLifetimeSeconds' => 600,
-    // an upload above this size runs as a multipart upload; parts of this size (the last one smaller)
     'multipartThresholdBytes' => 64 * 1024 * 1024,
-    'multipartPartBytes' => 16 * 1024 * 1024,
     // an unfinished upload or an unreferenced staged blob is swept after this many hours
     'unfinishedUploadExpiryHours' => 24,
     // the ingest of a new version (hash, scan, release) in a worker: DriveIngestVersionMessage on the transport

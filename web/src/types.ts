@@ -53,27 +53,43 @@ export interface DriveFileVersion {
   changeHistory?: { createdTime?: string | null } | null;
 }
 
-export interface DrivePresignedRequest {
-  method: 'PUT' | 'GET';
-  url: string;
-  headers?: Record<string, string>;
-  expiresAt?: string | null;
-}
-
-export interface DriveUploadPartRequest {
-  partNumber: number;
-  request: DrivePresignedRequest;
-}
-
+/**
+ * A reserved upload: the bytes go to the backend — in one request (`PUT …/uploads/{driveBlobId}/content`) or in
+ * parts of `partSizeBytes` (`PUT …/uploads/{driveBlobId}/parts/{partNumber}`); a resumed upload skips
+ * `uploadedPartNumbers`. No URL of the object store ever reaches the browser.
+ */
 export interface DriveUploadReservation {
   driveBlobId: number;
   sizeBytes: number;
-  uploadRequest?: DrivePresignedRequest | null;
   isMultipart?: boolean;
   partSizeBytes?: number;
   partCount?: number;
-  partRequests?: { elements?: DriveUploadPartRequest[] } | null;
+  /** Parts the store holds already (a resumed upload sends only the others). */
+  uploadedPartNumbers?: number[];
   isContentKnown?: boolean;
+}
+
+/** The bytes of an upload (or of one part) arrived. */
+export interface DriveUploadBytesResponse {
+  driveBlobId: number;
+  partNumber?: number | null;
+  sizeBytes: number;
+}
+
+export interface DriveUploadContentArg {
+  driveBlobId: number;
+  /** The bytes, typed `application/octet-stream` (the backend streams such a body without reading it into memory). */
+  body: Blob;
+}
+
+export interface DriveUploadPartArg {
+  driveBlobId: number;
+  partNumber: number;
+  body: Blob;
+}
+
+export interface DriveUploadStateArg {
+  driveBlobId: number;
 }
 
 export interface DriveContentGrant {
