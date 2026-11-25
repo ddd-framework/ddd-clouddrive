@@ -8,6 +8,9 @@ export type DriveSpaceAudience = 'INTERNAL' | 'SHARED';
  */
 export type DriveContentPurpose = 'DOWNLOAD' | 'INLINE' | 'THUMBNAIL';
 
+/** The state of a PDF the server renders of a document (ddd-clouddrive ≥ 0.3.5). */
+export type DriveRenditionState = 'READY' | 'PENDING' | 'FAILED';
+
 /** Who the drive answers as: staff (`internal`, default) or a partner audience (`shared`, ddd-clouddrive ≥ rc.11). */
 export type CloudDriveAudience = 'internal' | 'shared';
 
@@ -119,6 +122,8 @@ export interface DriveFileCard {
   urlsExpireAt?: string | null;
   /** The file's place in the host's drive screen (`CloudDrive.settings.adminLinkTemplate`; ddd-clouddrive ≥ 0.1.0-rc.14). */
   adminLink?: string | null;
+  /** The server renders this document as a PDF for the preview (ddd-clouddrive ≥ 0.3.5). */
+  hasPdfRendition?: boolean;
 }
 
 export interface DriveSpacesResponse {
@@ -152,6 +157,19 @@ export interface DriveUploadReservationResponse {
 
 export interface DriveContentGrantResponse {
   grant: DriveContentGrant;
+}
+
+/** `GET /nodes/{id}/rendition`: the PDF rendition of a document — its content URL once it is `READY`. */
+export interface DriveRenditionResponse {
+  state: DriveRenditionState;
+  /** Why none could be made (`FAILED`), in plain words. */
+  reason?: string | null;
+  grant?: DriveContentGrant | null;
+}
+
+export interface DriveRenditionArg {
+  driveNodeId: number;
+  versionId?: number | null;
 }
 
 export interface DriveFileCardsResponse {
@@ -202,6 +220,11 @@ export interface DriveUploadCompleteArg {
   comment?: string | null;
   expectedLatestVersionId?: number | null;
   replaceExisting?: boolean;
+  /**
+   * The agent conversation this write happens beside (the file is open in its canvas): the server notes the new
+   * version there, so the agent's next turn knows the file changed (ddd-clouddrive ≥ 0.3.5; ignored without ddd-agents).
+   */
+  agentConversationId?: number | null;
 }
 
 export interface DriveContentArg {
@@ -256,6 +279,8 @@ export interface DriveNodeListItem {
   isSystem?: boolean;
   /** Only for released JPEG, PNG, GIF or WebP. */
   thumbnailUrl?: string | null;
+  /** The server renders this document as a PDF for the preview (`GET /nodes/{id}/rendition`; ddd-clouddrive ≥ 0.3.5). */
+  hasPdfRendition?: boolean;
   createdByAccountId?: number | null;
   createdByName?: string | null;
   /** ddd-clouddrive ≥ rc.20: the account the creator acted for (impersonation); null otherwise. */

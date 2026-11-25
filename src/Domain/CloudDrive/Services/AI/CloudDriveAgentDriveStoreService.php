@@ -180,13 +180,25 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                     $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': its content is blocked or missing';
                     continue;
                 }
+                // the base of the write: the target's newest version as it is now; a copy made from an older version of
+                // the target is refused instead of written on top of what someone saved meanwhile
+                $existingTargetNode = $this->getDriveNodesService()->findChildByName($targetFolderNode, (string)$sourceNode->name);
+                if ($existingTargetNode !== null && $existingTargetNode->isFile()) {
+                    $staleBaseRefusal = $this->findStaleBaseRefusal($sourceNode, $existingTargetNode);
+                    if ($staleBaseRefusal !== null) {
+                        $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': ' . $staleBaseRefusal;
+                        continue;
+                    }
+                }
                 $copiedBlob = $this->getDriveBlobsService()->copyBlobIntoSpace($sourceBlob, $targetSpace);
                 $driveFileWrite = new DriveFileWrite();
                 $driveFileWrite->driveBlobId = (int)$copiedBlob->id;
                 $driveFileWrite->comment = 'copied from ' . $sourcePath->getWorkspacePath();
                 $driveFileWrite->origin = DriveNode::ORIGIN_COPY;
                 $driveFileWrite->isContentUntrusted = (bool)$sourceNode->isContentUntrusted || $sourceSpace->isShared();
-                $driveFileWrite->ignoresExpectedVersion = true;
+                // compare and swap on the newest version read above: a version written between the read and this write
+                // is a conflict (a refused line), never silently replaced
+                $driveFileWrite->expectedLatestVersionId = $existingTargetNode?->latestVersionId;
                 /** @var DriveChangesService $driveChangesService */
                 $driveChangesService = DDDService::instance()->getService(DriveChangesService::class);
                 $driveFileWrite->authorAccountId = $driveChangesService->findActingAccountIdOfCurrentCaller();
@@ -210,6 +222,59 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             }
         }
         return $agentDriveSaveResult;
+    }
+
+    /**
+     * Why a copy of `$sourceNode` may not become the next version of `$targetNode`, or null when it may. The store
+     * knows which version of the target a copy was made from: the source was copied out of the target (its origin), a
+     * version of the target was copied onto the source later, or the target's newest version was written from the
+     * source. When the source knows the target and the target's newest version is none of these, someone else wrote
+     * it since: the agent reads that version first. A source that never met the target has no base; it is written on
+     * top of the newest version read in the same call.
+     */
+    public function findStaleBaseRefusal(DriveNode $sourceNode, DriveNode $targetNode): ?string
+    {
+        if ($targetNode->latestVersionId === null || (int)$sourceNode->id === (int)$targetNode->id) {
+            return null;
+        }
+        $driveVersionsService = $this->getDriveVersionsService();
+        $latestTargetVersionId = (int)$targetNode->latestVersionId;
+        $knownTargetVersionIds = [];
+        if ($sourceNode->copiedFromNodeId !== null && (int)$sourceNode->copiedFromNodeId === (int)$targetNode->id && $sourceNode->copiedFromVersionId !== null) {
+            $knownTargetVersionIds[] = (int)$sourceNode->copiedFromVersionId;
+        }
+        // versions of the source that are copies: the ones copied from a version of the target count
+        $copiedVersionIds = [];
+        foreach ($driveVersionsService->findVersionsOfNode($sourceNode, 200)->getElements() as $sourceVersion) {
+            if ($sourceVersion->copiedFromVersionId !== null) {
+                $copiedVersionIds[] = (int)$sourceVersion->copiedFromVersionId;
+            }
+        }
+        foreach ($driveVersionsService->findVersionsByIds($copiedVersionIds)->getElements() as $copiedVersion) {
+            if ((int)$copiedVersion->driveNodeId === (int)$targetNode->id) {
+                $knownTargetVersionIds[] = (int)$copiedVersion->id;
+            }
+        }
+        if (in_array($latestTargetVersionId, $knownTargetVersionIds, true)) {
+            return null;
+        }
+        $latestTargetVersions = $driveVersionsService->findVersionsByIds([$latestTargetVersionId])->getElements();
+        $latestTargetVersion = $latestTargetVersions[0] ?? null;
+        if ($latestTargetVersion !== null && $latestTargetVersion->copiedFromVersionId !== null) {
+            $originVersions = $driveVersionsService->findVersionsByIds([(int)$latestTargetVersion->copiedFromVersionId])->getElements();
+            if (isset($originVersions[0]) && (int)$originVersions[0]->driveNodeId === (int)$sourceNode->id) {
+                // the target's newest version is this source's own last save
+                return null;
+            }
+        }
+        if ($knownTargetVersionIds === []) {
+            return null;
+        }
+        return sprintf(
+            'the target has a newer version (%d) than the one this copy was made from; nothing was written. '
+            . 'Read the target\'s newest version, take its changes into your file (copying the target onto your file makes it the new base), then save again; or save under another name',
+            (int)($latestTargetVersion?->versionNumber ?? $targetNode->versionNumber)
+        );
     }
 
     /**

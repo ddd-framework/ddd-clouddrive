@@ -1,13 +1,15 @@
 import { defineConfig } from 'tsup';
 
-// Three entries built together, so what they share (the api, the payload types) lands in shared chunks and exists
-// once: `.` (client and types), `./screen` (the drive screen) and `./agents` (the DriveFiles cards source). Dependencies
+// Four entries built together, so what they share (the api, the payload types, the file adapter) lands in shared chunks
+// and exists once: `.` (client and types), `./screen` (the drive screen), `./agents` (the DriveFiles cards source) and
+// `./canvas` (the drive in the canvas beside the agent chat). Dependencies
 // and peer dependencies stay external. `scripts/check-package.mjs` verifies the split after every build.
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'screen/index': 'src/screen/index.ts',
     'agents/index': 'src/agents/index.ts',
+    'canvas/index': 'src/canvas/index.ts',
   },
   format: ['esm'],
   dts: true,

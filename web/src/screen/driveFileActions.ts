@@ -1,7 +1,7 @@
 // The writes of the drive's file manager adapter, built from the mutation triggers of `createCloudDriveApi`. Pure: no
 // React; `useCloudDriveFileAdapter` binds the triggers, the tests pass fakes.
 import { translateText } from '@mgamadeus/ddd-admin-ui/i18n';
-import type { FileDownloadOptions, FileManagerActions } from '@mgamadeus/ddd-admin-ui/files';
+import type { FileDownloadOptions, FileManagerActions, FileTextSaveResult } from '@mgamadeus/ddd-admin-ui/files';
 import type { FileAreaKey, FileItemId, FileView } from '@mgamadeus/ddd-admin-ui/files';
 import type { UploadProgressCallbacks } from '@mgamadeus/ddd-admin-ui/files';
 import type { CloudDriveApi } from '../api.ts';
@@ -18,6 +18,7 @@ export interface CloudDriveFileActionTriggers {
   putUploadPart: TriggerOf<CloudDriveApi['usePutDriveUploadPartMutation']>;
   completeUpload: TriggerOf<CloudDriveApi['useCompleteDriveUploadMutation']>;
   requestContent: TriggerOf<CloudDriveApi['useDriveContentMutation']>;
+  requestRendition: TriggerOf<CloudDriveApi['useDriveRenditionMutation']>;
   moveNode: TriggerOf<CloudDriveApi['useMoveDriveNodeMutation']>;
   updateMetadata: TriggerOf<CloudDriveApi['useUpdateDriveNodeMetadataMutation']>;
   createFolder: TriggerOf<CloudDriveApi['useCreateDriveFolderMutation']>;
@@ -33,6 +34,8 @@ export interface CloudDriveFileActionTriggers {
 export interface DriveNodeFact {
   parentNodeId: number | null;
   name: string;
+  /** The stored type of the file's content, kept for a text saved as its next version. */
+  contentType?: string | null;
 }
 
 export interface CloudDriveFileActionContext {
@@ -44,7 +47,36 @@ export interface CloudDriveFileActionContext {
   canManage: boolean;
   /** Facts of the nodes the lists showed, by id. */
   nodeFacts: Map<number, DriveNodeFact>;
+  /**
+   * The agent conversation the manager is shown beside (a file or folder canvas), read at each text save: the server
+   * notes the new version there. Absent or `null`: no note.
+   */
+  getAgentConversationId?: () => number | null;
 }
+
+/** How many names "save as a copy" tries when the proposed one is taken (`Notes (copy).md`, `Notes (copy 2).md`, …). */
+export const DRIVE_COPY_NAME_ATTEMPTS = 6;
+
+/** The next name of a copy whose proposed name is taken: `Notes (copy).md` → `Notes (copy 2).md` (attempt 2). */
+export const nextDriveCopyName = (proposedName: string, attempt: number): string => {
+  const match = /^(.*)\)(\.[^.()]*)?$/.exec(proposedName);
+  if (!match) return `${proposedName} ${attempt}`;
+  return `${match[1]} ${attempt})${match[2] ?? ''}`;
+};
+
+/** The text types a saved text keeps from its file; never a type a browser runs or renders (HTML, XML, SVG, script). */
+const KEPT_TEXT_CONTENT_TYPES: ReadonlySet<string> = new Set(['text/plain', 'text/markdown', 'text/csv', 'text/yaml', 'application/json', 'application/yaml']);
+
+/** The type a text is uploaded as: the file's stored type when it is a plain text type, else by its name, else plain text. */
+export const driveTextContentTypeOf = (name: string, storedContentType: string | null | undefined): string => {
+  const stored = (storedContentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (KEPT_TEXT_CONTENT_TYPES.has(stored)) return stored;
+  const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+  if (extension === 'md' || extension === 'markdown') return 'text/markdown';
+  if (extension === 'csv') return 'text/csv';
+  if (extension === 'json') return 'application/json';
+  return 'text/plain';
+};
 
 const toSpaceId = (areaKey: FileAreaKey): number => {
   const spaceId = Number(areaKey);
@@ -55,7 +87,7 @@ const toNodeIds = (ids: readonly FileItemId[]): number[] => ids.map(id => Number
 
 /** Remembers the folder and name of listed nodes (for a new version of a file). */
 export const rememberDriveNodes = (nodeFacts: Map<number, DriveNodeFact>, items: readonly DriveNodeListItem[]): void => {
-  for (const item of items) nodeFacts.set(item.id, { parentNodeId: item.parentNodeId ?? null, name: item.name });
+  for (const item of items) nodeFacts.set(item.id, { parentNodeId: item.parentNodeId ?? null, name: item.name, contentType: item.contentType ?? null });
 };
 
 /**
@@ -84,8 +116,8 @@ const unwrapAbortable = <TResult>(request: { unwrap: () => Promise<TResult>; abo
 };
 
 export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTriggers, context: CloudDriveFileActionContext): FileManagerActions => {
-  const { reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion } = triggers;
-  const { spaceId, rootNodeId, canManage, nodeFacts } = context;
+  const { reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, requestRendition, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion } = triggers;
+  const { spaceId, rootNodeId, canManage, nodeFacts, getAgentConversationId } = context;
   const rememberNodes = (items: readonly DriveNodeListItem[]) => rememberDriveNodes(nodeFacts, items);
   const folderNodeIdOf = (folderId: FileItemId | null): number | null => (folderId === null ? rootNodeId : Number(folderId));
   const fileViewOfResponse = (response: DriveNodeResponse): FileView => {
@@ -101,13 +133,14 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     putContent: (driveBlobId, body, signal) => unwrapAbortable(putUploadContent({ driveBlobId, body }), signal),
     putPart: (driveBlobId, partNumber, body, signal) => unwrapAbortable(putUploadPart({ driveBlobId, partNumber, body }), signal),
   };
-  const uploadInto = async (
+  /** Sends a file's bytes and completes the upload; the answer may be a conflict (`isConflict`). */
+  const sendInto = async (
     driveSpaceId: number,
     folderNodeId: number | null,
     file: File,
     callbacks: UploadProgressCallbacks,
-    options: { comment?: string | null; replaceExisting?: boolean }
-  ): Promise<FileView> => {
+    options: { comment?: string | null; replaceExisting?: boolean; expectedLatestVersionId?: number | null; agentConversationId?: number | null }
+  ): Promise<DriveNodeResponse> => {
     // the file's name lets the space refuse a type before any byte is sent; the key resumes an upload cut off before
     const { reservation } = await reserveUpload({
       driveSpaceId,
@@ -117,15 +150,25 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
       idempotencyKey: driveUploadIdempotencyKeyOf({ driveSpaceId, folderNodeId, name: file.name, sizeBytes: file.size, lastModified: file.lastModified }),
     }).unwrap();
     await sendDriveUpload(reservation, file, driveUploadSender, (sent, total) => callbacks.onProgress?.(sent, total), callbacks.signal);
-    const response = await completeUpload({
+    return completeUpload({
       driveBlobId: reservation.driveBlobId,
       folderNodeId,
       name: file.name,
       comment: options.comment ?? null,
       replaceExisting: options.replaceExisting ?? false,
+      ...(options.expectedLatestVersionId === undefined ? {} : { expectedLatestVersionId: options.expectedLatestVersionId }),
+      ...(options.agentConversationId ? { agentConversationId: options.agentConversationId } : {}),
     }).unwrap();
-    return fileViewOfResponse(response);
   };
+  const uploadInto = async (
+    driveSpaceId: number,
+    folderNodeId: number | null,
+    file: File,
+    callbacks: UploadProgressCallbacks,
+    options: { comment?: string | null; replaceExisting?: boolean }
+  ): Promise<FileView> => fileViewOfResponse(await sendInto(driveSpaceId, folderNodeId, file, callbacks, options));
+  const textFileOf = (text: string, name: string, storedContentType: string | null | undefined): File =>
+    new File([text], name, { type: driveTextContentTypeOf(name, storedContentType), lastModified: Date.now() });
 
   const actions: FileManagerActions = {
     upload: (input, callbacks) =>
@@ -136,6 +179,13 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
       return uploadInto(spaceId, fact.parentNodeId, new File([file], fact.name, { type: file.type, lastModified: file.lastModified }), callbacks, { replaceExisting: true });
     },
     getDownload: async (fileId, options) => {
+      if (options.variant === 'PDF_RENDITION') {
+        const rendition = await requestRendition({ driveNodeId: Number(fileId), versionId: options.versionId === undefined ? null : Number(options.versionId) }).unwrap();
+        if (rendition.state === 'READY' && rendition.grant) {
+          return { url: rendition.grant.url, fileName: rendition.grant.fileName, expiresAt: rendition.grant.expiresAt ?? null, state: 'ready' };
+        }
+        return { url: '', fileName: '', state: rendition.state === 'FAILED' ? 'failed' : 'pending', message: rendition.reason ?? null };
+      }
       const { grant } = await requestContent({
         driveNodeId: Number(fileId),
         purpose: drivePurposeOf(options),
@@ -188,6 +238,32 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
     },
     restoreVersion: async (fileId, versionId) =>
       restoreVersion({ driveNodeId: Number(fileId), driveFileVersionId: Number(versionId) }).unwrap(),
+    // a text edited in place: a new version on top of the version it was read from, never on top of a newer one
+    saveText: async (fileId, input): Promise<FileTextSaveResult> => {
+      const fact = nodeFacts.get(Number(fileId));
+      if (!fact) throw new Error(translateText('Open the file again and retry.'));
+      const response = await sendInto(spaceId, fact.parentNodeId, textFileOf(input.text, fact.name, fact.contentType), {}, {
+        // without a known base the server compares with "no version": an existing file is then always a conflict
+        expectedLatestVersionId: input.baseVersionId === null ? null : Number(input.baseVersionId),
+        agentConversationId: getAgentConversationId?.() ?? null,
+      });
+      if (response.isConflict) return { status: 'conflict', message: response.conflictReason ?? null };
+      return { status: 'saved', file: fileViewOfResponse(response) };
+    },
+    saveTextAsCopy: async (fileId, input) => {
+      const fact = nodeFacts.get(Number(fileId));
+      if (!fact) throw new Error(translateText('Open the file again and retry.'));
+      for (let attempt = 1; attempt <= DRIVE_COPY_NAME_ATTEMPTS; attempt += 1) {
+        const name = attempt === 1 ? input.name : nextDriveCopyName(input.name, attempt);
+        // a name that exists answers a conflict (the copy never becomes a version of another file): the next name
+        const response = await sendInto(spaceId, fact.parentNodeId, textFileOf(input.text, name, fact.contentType), {}, {
+          expectedLatestVersionId: null,
+          agentConversationId: getAgentConversationId?.() ?? null,
+        });
+        if (!response.isConflict) return fileViewOfResponse(response);
+      }
+      throw new Error(translateText('No free name was found for the copy. Rename a copy in this folder and retry.'));
+    },
   };
   if (canManage) {
     actions.purgeFiles = async fileIds => (await purgeNodes({ driveSpaceId: spaceId, driveNodeIds: toNodeIds(fileIds) }).unwrap()).result;

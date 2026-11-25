@@ -70,8 +70,18 @@ folders and versioned files whose bytes live in object storage, working copies f
   tool package `clouddrive.files` (`CloudDriveMCPPackage`: `driveStatus`, `commitDriveChanges`, `findDriveFiles`,
   `getDriveFile`, `listDriveFileEvents`, `getDriveSpace`, `organizeDriveFiles`, `createDriveFolder`,
   `trashDriveFiles`, `restoreDriveFiles`, `rescanDriveFileVersion`, `setDriveSpaceSettings`,
-  `importDriveFileToMediaLibrary`, `showDriveLocation`), the widget `DriveLocation`, the skill `CloudDrive.Files` and
-  the right constant `CloudDriveAccountRights::USE_DRIVE`.
+  `importDriveFileToMediaLibrary`, `showDriveFolder`, `showDriveLocation`), the widgets `DriveFolder` (a folder the
+  owner browses in the canvas beside the chat) and `DriveLocation` (a link into the drive screen), the skill
+  `CloudDrive.Files` and the right constant `CloudDriveAccountRights::USE_DRIVE`.
+- **People and the agent write the same files** (with ddd-agents): a version a person saves beside an agent
+  conversation (`agentConversationId` of `POST …/uploads/{id}/complete`, sent by the canvas of the web package) is
+  noted in that conversation as the signal `DRIVE_FILE_CHANGED_BY_PERSON`
+  (`CloudDriveConversationSignalSource`, `DriveAgentConversationNotesService`): "version 3 → 4, read it again". The
+  note is written by the server from the write's facts, only into a conversation the caller may read; it starts no
+  turn and marks the agent's earlier reads of the file as outdated. The agent's direct save (`saveDriveFile`) and the
+  browser file sink write on top of the newest version they read (compare and swap); a copy made from an older
+  version of the target than its newest is refused with the way out
+  (`CloudDriveAgentDriveStoreService::findStaleBaseRefusal()`), never written over what someone saved meanwhile.
 - **Browser file sink** (with ddd-agents and ddd-agent-browser ≥ 0.2.0): `CloudDriveBrowserFileSinkService`
   implements the browser's `BrowserFileSink`. Files that leave the browser land in the own drive of the call's agent
   space in `web/<domain>/` under the renderer's names, through the upload intake: type from the bytes, an allow-list
@@ -215,6 +225,53 @@ One request carries at most one part, so the limits below hold for any file size
   download, an idle timeout above the pauses of a slow client; no buffering middleware on the content route.
 - **Origins** — content URLs are relative to `transfer.contentUrlPrefix`; a frontend on another origin than the API
   gets an absolute prefix. No cookie or `Authorization` header is needed for them (`<img>`, `<video>`, links).
+
+## Office renditions (PDF preview of Office files)
+
+Off by default (`CloudDrive.settings.officeRenditions.enabled`). When on, `GET {prefix}/nodes/{id}/rendition[?versionId=]`
+answers `{ state: READY | PENDING | FAILED, reason?, grant? }` for docx, xlsx, pptx, odt, ods and odp; list items and
+file cards say `hasPdfRendition`. The first call dispatches the conversion, the client asks again every few seconds.
+The PDF is stored next to the blob (`<blob key>.rendition.pdf`), once per content, and is deleted with the blob. The
+legacy formats doc, xls and ppt get no rendition. `GET …/content?purpose=RENDITION` grants a stored rendition and never
+starts one.
+
+The host provides:
+- **Transport and consumer.** Route `DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage` to the transport
+  `drive_render` and run a consumer for it. A message routed nowhere is converted inside the web request: switch the
+  setting on only together with the routing and the consumer.
+- **Image.** The consumer's image needs LibreOffice (`soffice`) and fonts; coreutils `timeout` and util-linux `prlimit`
+  are used when present (`timeout` ends the whole process group).
+- **No network for the consumer.** The package cannot cut the network from PHP; give the worker an isolated egress
+  (it needs the object store, the database and the broker, nothing else).
+
+The package guarantees:
+- LibreOffice only sees local files: PHP downloads the blob to a path it names and uploads the PDF; the converter
+  never gets a URL.
+- The ZIP container is inspected before it is opened (entries, expanded size, compression ratio, entry names, the
+  format's marker entry).
+- LibreOffice runs without a shell and without any inherited environment variable (only PATH, HOME, TMPDIR, LANG — no
+  store, database or broker credential is in its environment), with a timeout and an address space cap, and with a
+  throwaway profile per job (`-env:UserInstallation=file://<job directory>/profile`): macros off, no link updates, no
+  linked or remote content, no recalculation on load, no Java, no update check, no crash reporter, no recovery.
+- Only the first `maxPages` pages are exported; the output is stored only when it is a PDF of at most 100 MiB; the
+  working directory is always removed; a reader sees a plain reason, never the converter's output.
+- The request path and the worker path take no cache lock and make no cache call of their own: state and
+  deduplication live in the object store (the rendition, a pending marker and a failure marker next to the blob).
+
+Limitation: the converter runs with the worker's own uid, so it could read `/proc/<worker pid>/environ` (the worker's
+environment holds the credentials). Where the image can switch the uid, set `commandPrefix` (e.g.
+`['setpriv', '--reuid=65534', '--regid=65534', '--clear-groups', '--']`); a pod that runs unprivileged without
+capabilities cannot (then the isolated egress is what keeps a credential from leaving).
+
+Settings (`officeRenditions`): `enabled` (false), `maxSourceBytes` (50 MB), `timeoutSeconds` (120; a conversion nobody
+answered for twice as long is dispatched again), `maxPages` (300), `binary` (`soffice`), `commandPrefix` (`[]`),
+`addressSpaceBytes` (4 GiB, `null` = no cap). A failed conversion is kept for 24 hours (10 minutes when the converter
+could not start), then the next request tries again.
+
+**A host that must not start conversions from a request** (a workspace that reads another environment's store and
+queue) overrides `DriveOfficeRenditionsService::isConversionStartAllowed()` in a same-path subclass. Where it answers
+false, the route serves a stored PDF and otherwise `FAILED` ("This file has no PDF preview yet, and none is created in
+this environment."): no marker is read, written or removed and nothing is dispatched.
 
 ## Frontend
 

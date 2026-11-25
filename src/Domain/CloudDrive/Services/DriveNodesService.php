@@ -700,6 +700,7 @@ class DriveNodesService extends EntitiesService
         $accountDisplayNames = $driveActorNamesService->findActorDisplayNames($accountIds, $audience);
         /** @var DriveContentGrantsService $driveContentGrantsService */
         $driveContentGrantsService = DDDService::instance()->getService(DriveContentGrantsService::class);
+        $driveOfficeRenditionsService = $this->getDriveOfficeRenditionsService();
         $driveNodeListItems = new DriveNodeListItems();
         foreach ($driveNodes->getElements() as $driveNode) {
             $driveNodeListItem = new DriveNodeListItem();
@@ -759,6 +760,9 @@ class DriveNodesService extends EntitiesService
             ) {
                 $driveNodeListItem->thumbnailUrl = $driveContentGrantsService->createContentUrlOfCheckedVersion((int)$driveNode->id, (int)$shownVersion->id, DriveContentGrant::PURPOSE_THUMBNAIL);
             }
+            $driveNodeListItem->hasPdfRendition = $shownBlob !== null && $shownBlob->isReadableByPeople()
+                && $driveOfficeRenditionsService->isRenditionOffered($driveNode, (int)$shownBlob->sizeBytes, $shownBlob->contentType)
+                && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_RENDITION, $audience);
             $driveNodeListItems->add($driveNodeListItem);
         }
         return $driveNodeListItems;
@@ -1190,6 +1194,13 @@ class DriveNodesService extends EntitiesService
         /** @var DriveBlobsService $driveBlobsService */
         $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
         return $driveBlobsService;
+    }
+
+    protected function getDriveOfficeRenditionsService(): DriveOfficeRenditionsService
+    {
+        /** @var DriveOfficeRenditionsService $driveOfficeRenditionsService */
+        $driveOfficeRenditionsService = DDDService::instance()->getService(DriveOfficeRenditionsService::class);
+        return $driveOfficeRenditionsService;
     }
 
     protected function getDriveWorkingCopiesService(): DriveWorkingCopiesService

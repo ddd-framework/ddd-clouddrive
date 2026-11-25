@@ -21,5 +21,9 @@
   "Viewed__file-event": "File manager details drawer, history: event type: someone opened the file's preview.",
   "Written by a third party__drive-card-state": "Agent chat, file card of the drive: state line of a file whose content came from outside (e.g. a mail attachment or a web page), not from the owner.",
   "You may read this space, but not change it.": "Notice above the drive's file list when the user may open and download files of this space but not upload, rename, move or delete.",
-  "{count, plural, one {# file} other {# files}}": "File manager (the admin's file area: folder tree, file list as grid or table, uploads, trash). ICU plural; # is the number."
+  "{count, plural, one {# file} other {# files}}": "File manager (the admin's file area: folder tree, file list as grid or table, uploads, trash). ICU plural; # is the number.",
+  "Show in the drive": "File canvas beside the agent chat (one drive file opened from a file list of the agent): link to the file's place in the drive screen.",
+  "This file is not available. It was removed, or you may not open it.": "File canvas beside the agent chat: the drive file no longer exists, is a folder, or the reader has no right to it.",
+  "No free name was found for the copy. Rename a copy in this folder and retry.": "Drive, error message when an edited text should be saved as a copy beside the original but the names \"… (copy)\", \"… (copy 2)\" … up to 6 are all taken in the folder.",
+  "This folder is not available. It was removed, or you may not open it.": "Drive folder opened beside the agent chat: shown instead of the file list when the folder was deleted or the user has no right to read it."
 }

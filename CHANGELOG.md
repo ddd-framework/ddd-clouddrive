@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.3.5
+
+Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.0 and, for the canvases, `mgamadeus/ddd-agents` / `@mgamadeus/ddd-agents` ≥ 0.3.14.
+No table change.
+
+- **Files and folders open in the canvas beside the agent chat.** `registerCloudDriveCanvases({ api, screenRoute?,
+  loadPdfJs?, loadCodeHighlighter?, renderMarkdown?, store? })` (new entry `@mgamadeus/ddd-clouddrive/canvas`) registers
+  on `@mgamadeus/ddd-agents`: the canvas kind `cloudDriveFile` (a file of a `DriveFiles` block with a preview opens in
+  `FileViewer` of `@mgamadeus/ddd-admin-ui/files`: preview, choice of a stored version, download, "Show in the drive"),
+  the canvas kind `cloudDriveFolder` (a folder opens as the compact `FileManager`: walk into folders, open a file in
+  place, download; upload, new folder, rename, move and trash only for a viewer who may write in the space), the block
+  `DriveFolder` and the canvas opener of the store `clouddrive`. A pointer carries the reference only; node, versions
+  and content are read through the drive routes under the viewer's rights, every byte through the content route.
+  Hosts that do not call it see no change; `.` and `./agents` still load neither the screen nor ddd-agents at runtime.
+  `cloudDriveFileCanvasReferenceOf`, `cloudDriveFolderCanvasReferenceOf`, `driveNodeIdOfCanvasReference`,
+  `parseDriveFolderWidgetPayload`, `CloudDriveFileCanvas`, `CloudDriveFolderCanvas`, `createCloudDriveFileCanvasBody`,
+  `createCloudDriveFolderCanvasBody`, `DriveFolderConversationWidget`, `CLOUD_DRIVE_FILE_CANVAS_ID`,
+  `CLOUD_DRIVE_FOLDER_CANVAS_ID`, `DRIVE_FOLDER_WIDGET_NAME`, `CLOUD_DRIVE_STORE_NAME`.
+- **Tool `showDriveFolder` and widget `DriveFolder`** (`CloudDriveMCPPackage`, `DriveFolderConversationWidget`): the
+  agent opens a folder for the owner beside the chat. `showDriveLocation` / `DriveLocation` stay (a link into the drive
+  screen, a search). The skill `CloudDrive.Files` names both; a host that overrides the skill file adds `DriveFolder`
+  to `providesWidgetTypes` and the "Showing" lines.
+- **Text files are edited in place** (web): the adapter of the drive screen has `saveText` and `saveTextAsCopy`
+  (`createDriveFileManagerActions`), so `FileViewer` offers "Edit" for Markdown, text, CSV, JSON, YAML and source files
+  to a viewer who may write. Save writes a new version through the upload routes with `expectedLatestVersionId` = the
+  version the editor loaded; a version written meanwhile answers a conflict, nothing is overwritten, and the viewer
+  loads the newer version or saves a copy beside the file (`nextDriveCopyName`). `driveTextContentTypeOf`.
+- **The agent learns that a person wrote a version:** `POST …/uploads/{id}/complete` takes `agentConversationId` (sent
+  by the canvas). With ddd-agents the server notes the version in that conversation as the signal
+  `DRIVE_FILE_CHANGED_BY_PERSON` (`CloudDriveConversationSignalSource`, `DriveAgentConversationNotesService`): the file
+  by path and reference, "version 3 → 4", "read it again". Only a conversation the caller may read gets the note; it
+  starts no turn; the file's name is marked as written by people.
+- **The agent's direct writes carry their base version:** `saveDriveFile` (`CloudDriveAgentDriveStoreService::saveDriveFiles`)
+  and the browser file sink no longer write over whatever version is newest. They compare and swap on the newest
+  version they read, and `saveDriveFile` refuses a copy that was made from an older version of the target than its
+  newest (`findStaleBaseRefusal()`: the copy's origin, versions copied onto it since, the agent's own last save),
+  with the way out in the refused line. **Behaviour change** for a host that relied on the overwrite.
+- **PDF renditions of Office files** (off by default, `CloudDrive.settings.officeRenditions`): new route
+  `GET …/nodes/{driveNodeId}/rendition` answers `READY` (with a grant), `PENDING` or `FAILED` (with a reason) for docx,
+  xlsx, pptx, odt, ods and odp; `hasPdfRendition` on `DriveNodeListItem` and `DriveFileCard`; new content purpose
+  `RENDITION` (inline `application/pdf`, recorded as VIEWED). The conversion is a `DriveOfficeRenditionMessage` on the
+  transport `drive_render` and runs LibreOffice as an isolated process with a throwaway profile; the PDF is stored next
+  to the blob and purged with it. Hosts: route the message, give `drive_render` a consumer with LibreOffice and fonts,
+  and isolate its egress (README › "Office renditions"). Web: `useDriveRenditionMutation`, the viewer asks until the
+  rendition is there.
+  `DriveOfficeRenditionsService::isConversionStartAllowed()` (default true) is the host's switch for an environment
+  whose requests must leave store and queue untouched: there the route only serves a stored PDF.
+- `DriveContentGrantsService`: `resolveReadableVersion()`, `resolveReadableBlobOfVersion()` and
+  `createContentGrantOfDelivery()` are public parts of `resolveContentDelivery()` / `createContentGrant()`;
+  `DriveBlobsService::deleteDerivedObjects()`; `DriveContentDelivery::$etag`. The refusal of an unknown purpose now reads
+  "Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION." 3 new server messages.
+- **Drive screen:** `CloudDriveScreen` takes `loadCodeHighlighter` and `renderMarkdown` beside `loadPdfJs` and hands
+  them to the file manager: the details drawer then shows Markdown as "Preview" / "Source", coloured source files,
+  picture zoom and a player for video and sound (the shared viewer of admin-ui 0.8.0; the canvas shows the same).
+- Peers: `@mgamadeus/ddd-admin-ui` ≥ 0.8.0, `@mgamadeus/ddd-agents` ≥ 0.3.14 (optional, for `./agents` and `./canvas`).
+  4 new UI texts.
+
 ## 0.3.4
 
 - `app:drive:maintain` no longer scans in its own process: failed scans and lost ingests are dispatched as one

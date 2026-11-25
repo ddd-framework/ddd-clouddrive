@@ -19,6 +19,7 @@ use DDD\Domain\AI\Entities\MCPPackages\MCPToolSummary;
 use DDD\Domain\AI\Services\Conversations\Agent\OwnerConsentsService;
 use DDD\Domain\AI\Services\Conversations\AIConversationMessagesService;
 use DDD\Domain\AI\Services\Drives\AgentDriveStoresService;
+use DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets\DriveFolderConversationWidget;
 use DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets\DriveLocationConversationWidget;
 use DDD\Domain\CloudDrive\Entities\AI\Mounts\DriveMountedNode;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
@@ -53,6 +54,7 @@ use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesFindRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesOrganizeRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesRestoreRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFilesTrashRequestDto;
+use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFolderShowRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveLocationShowRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveMcpResponseDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveSpaceGetRequestDto;
@@ -68,7 +70,7 @@ class CloudDriveMCPPackage extends MCPPackage
 {
     public static ?string $name = 'clouddrive.files';
 
-    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles, getDriveFile, listDriveFileEvents and getDriveSpace without a download, organizeDriveFiles, createDriveFolder, trashDriveFiles, restoreDriveFiles, rescanDriveFileVersion and setDriveSpaceSettings in mounted spaces, importDriveFileToMediaLibrary, showDriveLocation as a link.';
+    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles, getDriveFile, listDriveFileEvents and getDriveSpace without a download, organizeDriveFiles, createDriveFolder, trashDriveFiles, restoreDriveFiles, rescanDriveFileVersion and setDriveSpaceSettings in mounted spaces, importDriveFileToMediaLibrary, showDriveFolder to open a folder beside the chat, showDriveLocation as a link.';
 
     public const int DEFAULT_FIND_LIMIT = 30;
     public const int MAX_FIND_LIMIT = 100;
@@ -378,6 +380,48 @@ class CloudDriveMCPPackage extends MCPPackage
         $conversationWidgetDelivery = $aIConversationMessagesService->appendWidget($callProvenance, $driveLocationWidget);
         $dictationNote = $driveLocationWidget->buildDictationNote($conversationWidgetDelivery, 'Say where the files are in one short sentence.');
         return DriveMcpResponseDto::withLines([], $dictationNote ?? 'The link is shown. Write one short line about it; do not write a URL.');
+    }
+
+    /**
+     * Opens a drive folder for the owner in the canvas beside the chat: a small file manager in which they walk into
+     * folders, preview and download files and — by their own rights on the space — upload, rename, move and trash. Use
+     * it when the owner should look through a folder, pick from it or tidy it; a few named files are `showDriveFiles`.
+     *
+     * @example {"path": "reports"}
+     * @example {"path": "drivespaces/library/Brand", "title": "Logos und Vorlagen"}
+     */
+    #[MCPTool]
+    #[MCPToolEffect(MCPToolEffect::READ)]
+    #[MCPToolSummary('Opens a drive folder for the owner in the canvas beside the chat (browse, preview, download; upload, rename, move, trash by their rights).')]
+    public function showDriveFolder(
+        DriveFolderShowRequestDto $requestDto,
+        AgentDriveStoresService $agentDriveStoresService,
+        DriveNodesService $driveNodesService,
+        AIConversationMessagesService $aIConversationMessagesService,
+        CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService,
+        AgentToolCallProvenance $callProvenance
+    ): DriveMcpResponseDto {
+        $driveMountedNode = $this->requireNodeOfArgument($agentDriveStoresService, $cloudDriveAgentDriveStoreService, $callProvenance, (string)($requestDto->path ?? ''));
+        $driveNode = $driveMountedNode->driveNode;
+        if (!$driveNode->isFolder()) {
+            throw new BadRequestException('showDriveFolder opens a folder; a file is shown with showDriveFiles.');
+        }
+        /** @var DriveSpacesService $driveSpacesService */
+        $driveSpacesService = DDDService::instance()->getService(DriveSpacesService::class);
+        $driveSpace = $driveSpacesService->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
+        $driveFolderWidget = new DriveFolderConversationWidget();
+        $driveFolderWidget->driveSpaceId = (int)$driveNode->driveSpaceId;
+        $driveFolderWidget->driveNodeId = (int)$driveNode->id;
+        $driveFolderWidget->name = $driveNode->isRoot() ? null : mb_substr((string)$driveNode->name, 0, 160);
+        $driveFolderWidget->path = $driveNodesService->buildPath($driveNode);
+        // the name the pickers show for the space (the host's label of what it belongs to), not its stored title
+        $driveFolderWidget->spaceTitle = mb_substr($driveSpacesService->buildSpaceDisplayName($driveSpace), 0, 160);
+        $driveFolderWidget->adminLink = $driveNodesService->buildAdminLink($driveNode, $driveFolderWidget->path);
+        $driveFolderWidget->title = $requestDto->title !== null && trim($requestDto->title) !== '' ? mb_substr(trim($requestDto->title), 0, 160) : null;
+        $driveFolderWidget->widgetSelfHydrationKey = $callProvenance->agentSpace?->getWidgetSelfHydrationKey();
+        $conversationWidgetDelivery = $aIConversationMessagesService->appendWidget($callProvenance, $driveFolderWidget);
+        $dictationNote = $driveFolderWidget->buildDictationNote($conversationWidgetDelivery, 'Say in one short sentence which folder is open.');
+        return DriveMcpResponseDto::withLines([], $dictationNote ?? 'The folder is open beside the chat. Write one short line about it; do not list its files and do not write a URL.');
     }
 
     /**

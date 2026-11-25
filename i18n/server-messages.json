@@ -40,11 +40,11 @@
             ]
         },
         {
-            "key": "Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.",
-            "text": "Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.",
-            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is opened in an unknown way. DOWNLOAD, INLINE and THUMBNAIL are technical values; keep them unchanged.",
+            "key": "Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION.",
+            "text": "Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is opened in an unknown way. DOWNLOAD, INLINE, THUMBNAIL and RENDITION are technical values; keep them unchanged.",
             "origins": [
-                "DriveContentGrantsService::resolveContentDelivery"
+                "DriveContentGrantsService::resolveReadableVersion"
             ]
         },
         {
@@ -76,7 +76,7 @@
             "text": "Only a file has content.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a folder is to be opened or downloaded as if it were a file.",
             "origins": [
-                "DriveContentGrantsService::resolveContentDelivery"
+                "DriveContentGrantsService::resolveReadableVersion"
             ]
         },
         {
@@ -150,7 +150,7 @@
             "text": "The file has no released version yet (it waits for its scan).",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a new file is opened before the malware scan has released it; try again shortly.",
             "origins": [
-                "DriveContentGrantsService::resolveContentDelivery"
+                "DriveContentGrantsService::resolveReadableVersion"
             ]
         },
         {
@@ -250,6 +250,22 @@
             ]
         },
         {
+            "key": "This file has no PDF rendition (yet).",
+            "text": "This file has no PDF rendition (yet).",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when the PDF preview of an Office file (Word, Excel, PowerPoint, OpenDocument) is opened before the server has created it; \"rendition\" means that PDF copy made for the preview.",
+            "origins": [
+                "DriveContentGrantsService::resolveContentDelivery"
+            ]
+        },
+        {
+            "key": "This file has no PDF rendition.",
+            "text": "This file has no PDF rendition.",
+            "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a PDF preview is requested for a file the server creates none for (no Office document, a file that is too large, or the feature is switched off); \"rendition\" means the PDF copy made for the preview.",
+            "origins": [
+                "DriveOfficeRenditionsService::requestRendition"
+            ]
+        },
+        {
             "key": "This upload is complete or gone; reserve a new one.",
             "text": "This upload is complete or gone; reserve a new one.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown when bytes are sent for an upload that was finished or expired already; the client starts the upload again.",
@@ -288,6 +304,7 @@
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when an older version of a file is opened or restored that does not exist (anymore).",
             "origins": [
                 "CloudDriveControllerTrait::getDriveNodeContent",
+                "CloudDriveControllerTrait::getDriveNodeRendition",
                 "CloudDriveControllerTrait::restoreDriveFileVersion"
             ]
         },

@@ -11,6 +11,7 @@ use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Services\DriveContentTokensService;
 use DDD\Domain\CloudDrive\Services\DriveMaintenanceService;
+use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\ObjectStorage\FilesystemObjectStorage;
@@ -314,6 +315,8 @@ class DriveBackendTransferTest extends TestCase
             }
         });
         $this->driveBlobsService->getObjectStorage()->putObject('1/2026/700-test', '0123456789');
+        // the purpose RENDITION serves a derived PDF next to the blob
+        $this->driveBlobsService->getObjectStorage()->putObject(DriveOfficeRenditionsService::buildRenditionStorageKey('1/2026/700-test'), '%PDF-1.7 rendition');
         $driveBlob = (new ReflectionClass(DriveBlob::class))->newInstanceWithoutConstructor();
         $driveBlob->id = 700;
         $driveBlob->driveSpaceId = 1;

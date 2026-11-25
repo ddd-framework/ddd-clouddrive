@@ -1,5 +1,5 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@mgamadeus/ddd-admin-ui@0.5.5'
-  - '@mgamadeus/ddd-agents@0.1.38'
+  - '@mgamadeus/ddd-admin-ui@0.8.0'
+  - '@mgamadeus/ddd-agents@0.3.14'

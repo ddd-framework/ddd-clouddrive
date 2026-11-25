@@ -2,7 +2,8 @@
 // Checks a package directory (this directory after `pnpm build`, or an extracted tarball's `package/`):
 //   1. every `exports` target exists
 //   2. the main entry (`.`) and the agents entry (`./agents`) do not reach the screen (no React component code) and
-//      `./agents` loads `@mgamadeus/ddd-agents` for types only (nothing at runtime)
+//      `./agents` loads `@mgamadeus/ddd-agents` for types only (nothing at runtime); the canvas entry (`./canvas`) is
+//      the one that loads both
 //   3. every JavaScript file starts with the 'use client' directive
 //   4. no test file is in `dist`
 //

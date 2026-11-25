@@ -402,8 +402,8 @@ class CloudDriveBrowserFileSinkService extends Service implements BrowserFileSin
         $driveFileWrite->comment = $comment;
         $driveFileWrite->origin = DriveNode::ORIGIN_UPLOAD;
         $driveFileWrite->isContentUntrusted = true;
+        // the base is the newest version read here: a version written between this read and the write is a conflict
         $driveFileWrite->expectedLatestVersionId = $existingNode?->latestVersionId;
-        $driveFileWrite->ignoresExpectedVersion = $existingNode !== null;
         $driveFileWrite->authorAccountId = $driveChangesService->findActingAccountIdOfCurrentCaller();
         $driveFileWrite->onBehalfOfAccountId = $driveChangesService->findOnBehalfOfAccountIdOfCurrentCaller();
         $driveFileWriteResult = $driveVersionsService->writeFile($driveSpace, $folderNode, $fileName, $driveFileWrite);

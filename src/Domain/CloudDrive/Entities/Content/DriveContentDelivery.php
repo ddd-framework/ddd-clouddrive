@@ -18,7 +18,7 @@ class DriveContentDelivery extends ValueObject
 
     public string $purpose = DriveContentGrant::PURPOSE_DOWNLOAD;
 
-    /** @var string The object to stream (the blob, or the sanitised copy of an SVG) */
+    /** @var string The object to stream (the blob, the sanitised copy of an SVG, or the PDF rendition of an Office file) */
     public string $storageKey = '';
 
     public string $fileName = '';
@@ -29,6 +29,9 @@ class DriveContentDelivery extends ValueObject
     public ?string $contentType = null;
 
     public ?string $sha256 = null;
+
+    /** @var string|null The store's ETag of a derived object (a PDF rendition); null = the ETag comes from the blob's SHA-256 */
+    public ?string $etag = null;
 
     /** @var string|null The type it is shown inline as (vetted: raster, PDF, plain text, a sanitised SVG); null = attachment */
     public ?string $inlineContentType = null;

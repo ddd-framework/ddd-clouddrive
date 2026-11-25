@@ -33,4 +33,12 @@ class DriveUploadCompleteRequestDto extends RequestDto
     /** @var bool|null Write on top of whatever version is there */
     #[Parameter(in: Parameter::BODY, required: false)]
     public ?bool $replaceExisting = null;
+
+    /**
+     * @var int|null The agent conversation this write happens beside (the file is open in its canvas): the new version
+     * is noted there for the agent's next turn. Only a conversation the caller may read gets a note; ignored without
+     * mgamadeus/ddd-agents.
+     */
+    #[Parameter(in: Parameter::BODY, required: false)]
+    public ?int $agentConversationId = null;
 }

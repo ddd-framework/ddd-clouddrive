@@ -101,6 +101,7 @@ export const driveFileViewOf = (item: DriveNodeListItem, rootNodeId: number | nu
   newestVersionReason: item.latestVersionStateReason ?? null,
   hasWorkingCopyChanges: item.hasWorkingCopyChanges === true,
   thumbnailUrl: item.thumbnailUrl ?? null,
+  ...(item.hasPdfRendition === true ? { hasPdfRendition: true } : {}),
   uploadedBy: item.createdByName ?? null,
   uploadedOnBehalfOf: item.createdOnBehalfOfName ?? null,
   createdAt: item.createdAt ?? null,

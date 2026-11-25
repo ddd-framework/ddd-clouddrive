@@ -1,6 +1,6 @@
 {
   "package": "@mgamadeus/ddd-clouddrive",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "generatedBy": "scripts/build-i18n-manifest.mjs",
   "keys": [
     {
@@ -63,6 +63,14 @@
       "hint": "Drive screen (cloud drive of the admin): page title of the file storage screen."
     },
     {
+      "key": "No free name was found for the copy. Rename a copy in this folder and retry.",
+      "text": "No free name was found for the copy. Rename a copy in this folder and retry.",
+      "files": [
+        "screen/driveFileActions.ts"
+      ],
+      "hint": "Drive, error message when an edited text should be saved as a copy beside the original but the names \"… (copy)\", \"… (copy 2)\" … up to 6 are all taken in the folder."
+    },
+    {
       "key": "No space matches.",
       "text": "No space matches.",
       "files": [
@@ -101,6 +109,15 @@
         "screen/CloudDriveSpacePicker.tsx"
       ],
       "hint": "Drive screen, space picker: placeholder of the search field."
+    },
+    {
+      "key": "Show in the drive",
+      "text": "Show in the drive",
+      "files": [
+        "canvas/CloudDriveFileCanvasBody.tsx",
+        "canvas/CloudDriveFolderCanvasBody.tsx"
+      ],
+      "hint": "File canvas beside the agent chat (one drive file opened from a file list of the agent): link to the file's place in the drive screen."
     },
     {
       "key": "The drive answered without the file.",
@@ -143,6 +160,22 @@
       "hint": "Drive screen: shown to developers when the server's drive module is too old for this screen; keep the package name and version as they are."
     },
     {
+      "key": "This file is not available. It was removed, or you may not open it.",
+      "text": "This file is not available. It was removed, or you may not open it.",
+      "files": [
+        "canvas/CloudDriveFileCanvasBody.tsx"
+      ],
+      "hint": "File canvas beside the agent chat: the drive file no longer exists, is a folder, or the reader has no right to it."
+    },
+    {
+      "key": "This folder is not available. It was removed, or you may not open it.",
+      "text": "This folder is not available. It was removed, or you may not open it.",
+      "files": [
+        "canvas/CloudDriveFolderCanvasBody.tsx"
+      ],
+      "hint": "Drive folder opened beside the agent chat: shown instead of the file list when the folder was deleted or the user has no right to read it."
+    },
+    {
       "key": "Trash__drive-usage",
       "text": "Trash",
       "context": "drive-usage",
@@ -181,6 +214,7 @@
       "key": "You may read this space, but not change it.",
       "text": "You may read this space, but not change it.",
       "files": [
+        "canvas/CloudDriveFolderCanvasBody.tsx",
         "screen/CloudDriveScreen.tsx"
       ],
       "hint": "Notice above the drive's file list when the user may open and download files of this space but not upload, rename, move or delete."

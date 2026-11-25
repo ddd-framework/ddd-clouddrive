@@ -1,7 +1,7 @@
 'use client';
 
 // The file manager of `./files` on the drive's endpoints (`createCloudDriveApi`, mgamadeus/ddd-clouddrive ≥ 0.1.0-rc.10).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { translateText } from '@mgamadeus/ddd-admin-ui/i18n';
 
@@ -45,6 +45,16 @@ export interface UseCloudDriveFileAdapterOptions {
   api: CloudDriveApi;
   /** The open space; writes without an area (move, trash, restore, purge) go to it. */
   spaceId: number;
+  /**
+   * The agent conversation the manager is shown beside (a file or folder canvas of the chat): a text saved there is
+   * noted in that conversation by the server. It may change without a new adapter.
+   */
+  agentConversationId?: number | null;
+}
+
+/** What the adapter reads at call time (it keeps its identity while these change). */
+export interface CloudDriveFileAdapterContext {
+  getAgentConversationId?: () => number | null;
 }
 
 /**
@@ -79,7 +89,7 @@ const useGrowingLimit = (key: string): readonly [number, (next: number) => void]
  * purge and empty trash appear only for a viewer with the space's manage right. Create it with
  * `useCloudDriveFileAdapter`; its identity changes only with `api` and `spaceId`.
  */
-export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number): FileManagerAdapter => {
+export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number, adapterContext: CloudDriveFileAdapterContext = {}): FileManagerAdapter => {
   const nodeFacts = new Map<number, DriveNodeFact>();
   // The resolve trigger of the last render (`useActions` runs on every render of the manager): the location capability
   // is a plain function, the request a mutation hook.
@@ -243,6 +253,7 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
     const [putUploadPart] = api.usePutDriveUploadPartMutation();
     const [completeUpload] = api.useCompleteDriveUploadMutation();
     const [requestContent] = api.useDriveContentMutation();
+    const [requestRendition] = api.useDriveRenditionMutation();
     const [moveNode] = api.useMoveDriveNodeMutation();
     const [updateMetadata] = api.useUpdateDriveNodeMetadataMutation();
     const [createFolder] = api.useCreateDriveFolderMutation();
@@ -256,12 +267,12 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
     const canManage = space.item?.canManage === true;
 
     const triggers: CloudDriveFileActionTriggers = {
-      reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes,
+      reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, requestRendition, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes,
       purgeNodes, emptyTrash, restoreVersion,
     };
     return useMemo(
-      () => buildCloudDriveFileActions(triggers, { spaceId, rootNodeId, canManage, nodeFacts }),
-      [canManage, rootNodeId, reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion]
+      () => buildCloudDriveFileActions(triggers, { spaceId, rootNodeId, canManage, nodeFacts, getAgentConversationId: adapterContext.getAgentConversationId }),
+      [canManage, rootNodeId, reserveUpload, putUploadContent, putUploadPart, completeUpload, requestContent, requestRendition, moveNode, updateMetadata, createFolder, moveNodes, trashNodes, restoreNodes, purgeNodes, emptyTrash, restoreVersion]
     );
   };
 
@@ -282,5 +293,8 @@ export const createCloudDriveFileAdapter = (api: CloudDriveApi, spaceId: number)
 };
 
 /** The drive's file manager adapter for one space; stable while `api` and `spaceId` stay the same. */
-export const useCloudDriveFileAdapter = ({ api, spaceId }: UseCloudDriveFileAdapterOptions): FileManagerAdapter =>
-  useMemo(() => createCloudDriveFileAdapter(api, spaceId), [api, spaceId]);
+export const useCloudDriveFileAdapter = ({ api, spaceId, agentConversationId }: UseCloudDriveFileAdapterOptions): FileManagerAdapter => {
+  const agentConversationIdRef = useRef<number | null>(agentConversationId ?? null);
+  agentConversationIdRef.current = agentConversationId ?? null;
+  return useMemo(() => createCloudDriveFileAdapter(api, spaceId, { getAgentConversationId: () => agentConversationIdRef.current }), [api, spaceId]);
+};

@@ -3,7 +3,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { FileManager, type FileAreaMaintenanceSlotProps, type FileAreaSettingsSlotProps } from '@mgamadeus/ddd-admin-ui/files';
-import type { PdfJsLoader } from '@mgamadeus/ddd-admin-ui/files';
+import type { CodeHighlighterLoader, MarkdownFileRenderer, PdfJsLoader } from '@mgamadeus/ddd-admin-ui/files';
 import { useTranslate } from '@mgamadeus/ddd-admin-ui/i18n';
 import type { EntityDrawerUrlAdapter } from '@mgamadeus/ddd-admin-ui/logic/pure';
 import type { UrlStateAdapter } from '@mgamadeus/ddd-admin-ui/logic/pure';
@@ -49,6 +49,10 @@ export interface CloudDriveScreenProps {
   drawerUrlAdapter?: EntityDrawerUrlAdapter;
   /** pdf.js of the host for the PDF preview (without it a PDF offers its download only). */
   loadPdfJs?: PdfJsLoader;
+  /** A highlighter of the host for the preview of source files (`codeHighlighterFromHighlightJs`); without it plain. */
+  loadCodeHighlighter?: CodeHighlighterLoader;
+  /** Draws a Markdown file as markup in the preview (`MarkdownPreview untrusted` of admin-ui `./markdown`); without it its source. */
+  renderMarkdown?: MarkdownFileRenderer;
   /** Host controls next to the page actions (a usage link, a maintenance action). */
   renderAreaMaintenance?: (props: FileAreaMaintenanceSlotProps) => ReactNode;
   /** The space's settings (a drawer of the host): the manager adds a "Space settings" button that opens it. */
@@ -78,6 +82,8 @@ export const CloudDriveScreen = ({
   urlStateAdapter,
   drawerUrlAdapter,
   loadPdfJs,
+  loadCodeHighlighter,
+  renderMarkdown,
   renderAreaMaintenance,
   renderAreaSettings,
   formatEventType,
@@ -174,6 +180,8 @@ export const CloudDriveScreen = ({
       urlStateAdapter={listUrl}
       drawerUrlAdapter={drawerUrl}
       loadPdfJs={loadPdfJs}
+      loadCodeHighlighter={loadCodeHighlighter}
+      renderMarkdown={renderMarkdown}
       defaultView={defaultView}
       renderAreaPicker={props => <CloudDriveSpacePicker {...props} spaces={spaceItems} />}
       renderAreaMaintenance={isPartner ? undefined : renderAreaMaintenance}

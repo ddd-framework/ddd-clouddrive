@@ -61,7 +61,7 @@ class DriveActivityEventsService extends EntitiesService
     public function recordContentAccess(DriveNode $driveNode, DriveContentGrant $driveContentGrant, string $audience, ?int $onBehalfOfAccountId = null): ?DriveActivityEvent
     {
         $eventType = match ($driveContentGrant->purpose) {
-            DriveContentGrant::PURPOSE_INLINE => DriveChangeEvent::EVENT_VIEWED,
+            DriveContentGrant::PURPOSE_INLINE, DriveContentGrant::PURPOSE_RENDITION => DriveChangeEvent::EVENT_VIEWED,
             DriveContentGrant::PURPOSE_DOWNLOAD => DriveChangeEvent::EVENT_DOWNLOADED,
             default => null,
         };

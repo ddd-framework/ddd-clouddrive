@@ -45,6 +45,9 @@ class DriveFileCard extends ValueObject
 
     public ?DateTime $urlsExpireAt = null;
 
+    /** @var bool The server offers a PDF rendition of this Office file (`GET …/nodes/{id}/rendition`) */
+    public bool $hasPdfRendition = false;
+
     /** @var string|null The host's deep link into its drive screen (`CloudDrive.settings.adminLinkTemplate`); null without a template */
     public ?string $adminLink = null;
 

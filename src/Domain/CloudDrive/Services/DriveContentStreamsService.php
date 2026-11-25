@@ -47,12 +47,13 @@ class DriveContentStreamsService extends Service
         $driveContentDelivery = $this->resolveDeliveryOfToken($driveContentToken, $request);
         $driveTransferSettings = DriveTransferSettings::fromConfig();
         $objectStorageObject = null;
-        if ($driveContentDelivery->sizeBytes !== null && $driveContentDelivery->sha256 !== null) {
-            // a released blob never changes: its size and hash are the store's HEAD without a request
+        if ($driveContentDelivery->sizeBytes !== null && ($driveContentDelivery->etag !== null || $driveContentDelivery->sha256 !== null)) {
+            // a released blob never changes: its size and hash are the store's HEAD without a request (a rendition's
+            // size and ETag were read from the store by the check just now)
             $objectStorageObject = new ObjectStorageObject();
             $objectStorageObject->key = $driveContentDelivery->storageKey;
             $objectStorageObject->size = $driveContentDelivery->sizeBytes;
-            $objectStorageObject->etag = $driveContentDelivery->sha256 . '-' . strtolower($driveContentDelivery->purpose);
+            $objectStorageObject->etag = $driveContentDelivery->etag ?? ($driveContentDelivery->sha256 . '-' . strtolower($driveContentDelivery->purpose));
         }
         return ObjectStorageStreamResponseDto::fromObjectStorage(
             $this->getStreamingObjectStorage(),

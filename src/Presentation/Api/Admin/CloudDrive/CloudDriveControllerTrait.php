@@ -16,9 +16,11 @@ use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
+use DDD\Domain\CloudDrive\Services\AI\DriveAgentConversationNotesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveMaintenanceService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
+use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveSpaceTransfersService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
@@ -50,6 +52,8 @@ use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesBulkResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesGetResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveNodesTransferRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveRenditionGetRequestDto;
+use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveRenditionResponseDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSearchGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetRequestDto;
 use DDD\Presentation\Api\Admin\CloudDrive\Dtos\DriveSpaceGetResponseDto;
@@ -72,8 +76,8 @@ use DDD\Presentation\Base\Router\Routes\Put;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * The drive screen's backend: spaces, folders, files, uploads (reserve, parts, complete), content URLs, file cards,
- * move, tags, trash and restore, name search, filtered lists, the folder tree, the trash list, versions and their
+ * The drive screen's backend: spaces, folders, files, uploads (reserve, parts, complete), content URLs, PDF renditions
+ * of Office files, file cards, move, tags, trash and restore, name search, filtered lists, the folder tree, the trash list, versions and their
  * restore, resolving a pasted location (path bar, deep link), a node's history, bulk move / trash / restore, purge and emptying the trash. A host mounts it with one controller that sets the path prefix, the tag
  * and the access (`#[Route('/common/cloudDrive')] class AdminCloudDriveController extends AdminController { use
  * CloudDriveControllerTrait; }`). Every read and write runs under the host's space rights; the access hook
@@ -373,6 +377,12 @@ trait CloudDriveControllerTrait
             }
             return $responseDto;
         }
+        // the file is open beside an agent conversation: its next turn learns that a person wrote a version
+        if ($requestDto->agentConversationId !== null && DriveAgentConversationNotesService::isAvailable()) {
+            /** @var DriveAgentConversationNotesService $driveAgentConversationNotesService */
+            $driveAgentConversationNotesService = DDDService::instance()->getService(DriveAgentConversationNotesService::class);
+            $driveAgentConversationNotesService->noteVersionWrittenByPerson($requestDto->agentConversationId, $driveFileWriteResult);
+        }
         return $this->buildDriveNodeResponse($driveFileWriteResult->driveNode, $driveNodesService, $driveVersionsService);
     }
 
@@ -380,8 +390,9 @@ trait CloudDriveControllerTrait
      * A short-lived URL of the backend (signed token, no `Authorization` header needed: `<img>`, `<video>`, a link)
      * for a file's released content: DOWNLOAD (the original as an attachment, recorded as DOWNLOADED),
      * INLINE (a preview of JPEG, PNG, GIF, WebP — an SVG only through the host's sanitiser — else an attachment;
-     * recorded as VIEWED) or THUMBNAIL (a list's picture, never recorded). The same reader, file, version and kind
-     * within `accessEventDedupSeconds` is recorded once.
+     * recorded as VIEWED), THUMBNAIL (a list's picture, never recorded) or RENDITION (the stored PDF rendition of an
+     * Office file, recorded as VIEWED; not found while there is none — {@see getDriveNodeRendition()} is the route
+     * that makes one). The same reader, file, version and kind within `accessEventDedupSeconds` is recorded once.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -405,6 +416,40 @@ trait CloudDriveControllerTrait
         $responseDto = new DriveContentGrantResponseDto();
         $responseDto->grant = $driveContentGrantsService->createContentGrant($driveNode, $purpose, $driveFileVersion);
         // the access (VIEWED / DOWNLOADED) is recorded when the URL is fetched (DriveContentStreamsService)
+        return $responseDto;
+    }
+
+    /**
+     * The PDF rendition of an Office file (docx, xlsx, pptx, odt, ods, odp; `CloudDrive.settings.officeRenditions`),
+     * under the checks of every content read: READY with a short-lived inline URL of the PDF, PENDING while a worker
+     * converts it (the first call starts the conversion; ask again every few seconds) or FAILED with a reason in
+     * plain words. A list item and a file card say with `hasPdfRendition` whether the route is worth calling; for
+     * any other file it answers 400.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     * @throws InternalErrorException
+     */
+    #[Get('/nodes/{driveNodeId}/rendition')]
+    #[Summary('DriveNode Rendition')]
+    public function getDriveNodeRendition(
+        DriveRenditionGetRequestDto $requestDto,
+        DriveNodesService $driveNodesService,
+        DriveVersionsService $driveVersionsService,
+        DriveOfficeRenditionsService $driveOfficeRenditionsService
+    ): DriveRenditionResponseDto {
+        $this->prepareCloudDriveAction();
+        $driveNode = $this->requireDriveNode($requestDto->driveNodeId, $driveNodesService);
+        $driveFileVersion = $requestDto->versionId !== null ? $driveVersionsService->find($requestDto->versionId, false) : null;
+        if ($requestDto->versionId !== null && (!$driveFileVersion instanceof DriveFileVersion || $driveFileVersion->driveNodeId !== $driveNode->id)) {
+            throw new NotFoundException('Version not found.');
+        }
+        $driveOfficeRendition = $driveOfficeRenditionsService->requestRendition($driveNode, $driveFileVersion);
+        $responseDto = new DriveRenditionResponseDto();
+        $responseDto->state = $driveOfficeRendition->state;
+        $responseDto->reason = $driveOfficeRendition->reason;
+        $responseDto->grant = $driveOfficeRendition->grant;
         return $responseDto;
     }
 

@@ -70,6 +70,31 @@ return [
         'alertEncrypted' => true,
         'timeoutSeconds' => 600,
     ],
+    // PDF renditions of Office files (docx, xlsx, pptx, odt, ods, odp), so a reader sees them in the PDF viewer:
+    // GET …/nodes/{id}/rendition answers READY, PENDING or FAILED; the PDF is stored next to the blob, once per
+    // content. The conversion is a DriveOfficeRenditionMessage on the transport `drive_render`: route it and give it a
+    // consumer whose image holds LibreOffice and fonts (README › "Office renditions"). A message routed nowhere runs
+    // INSIDE THE REQUEST that asked (LibreOffice in a web process, for up to timeoutSeconds): switch this on only
+    // together with the routing and the consumer.
+    'officeRenditions' => [
+        'enabled' => false,
+        // a larger file gets no rendition (and its list item no hasPdfRendition)
+        'maxSourceBytes' => 50 * 1024 * 1024,
+        // one conversion is killed after this many seconds; a conversion nobody answered for twice as long is
+        // dispatched again by the next request
+        'timeoutSeconds' => 120,
+        // only the first pages (slides, sheet pages) are converted
+        'maxPages' => 300,
+        // the LibreOffice binary: a plain name on /usr/local/bin:/usr/bin:/bin or an absolute path
+        'binary' => 'soffice',
+        // words put before the binary, each a separate word (never a shell string), for an image that can switch the
+        // uid or wrap the process, e.g. ['setpriv', '--reuid=65534', '--regid=65534', '--clear-groups', '--'];
+        // empty = the converter runs with the worker's uid (it can then read /proc/<worker pid>/environ)
+        'commandPrefix' => [],
+        // the converter's address space cap in bytes (prlimit --as, when installed); LibreOffice reserves far more
+        // than it uses, so not below 4 GiB; null = no cap
+        'addressSpaceBytes' => 4 * 1024 * 1024 * 1024,
+    ],
     // system folders of an agent workspace: hidden, not scanned; their files expire after this many days
     'systemFolders' => [
         'work' => ['expiryDays' => 7],

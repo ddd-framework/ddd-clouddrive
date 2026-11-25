@@ -37,7 +37,8 @@ use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
  * inline PDFs and texts off the application's origin points `transfer.contentUrlPrefix` at another host.
  * A working copy
  * gets its own unreleased content back (WORKSPACE_RESTORE): staged blobs of its entries and pending versions of its
- * space, never downloadable by people.
+ * space, never downloadable by people. RENDITION is the PDF a worker made of an Office file
+ * ({@see DriveOfficeRenditionsService}): inline like a stored PDF, under the same checks as the file itself.
  */
 class DriveContentGrantsService extends Service
 {
@@ -79,7 +80,18 @@ class DriveContentGrantsService extends Service
      */
     public function createContentGrant(DriveNode $driveNode, string $purpose = DriveContentGrant::PURPOSE_DOWNLOAD, ?DriveFileVersion $driveFileVersion = null): DriveContentGrant
     {
-        $driveContentDelivery = $this->resolveContentDelivery($driveNode, $purpose, $driveFileVersion);
+        return $this->createContentGrantOfDelivery($this->resolveContentDelivery($driveNode, $purpose, $driveFileVersion));
+    }
+
+    /**
+     * The grant of a delivery {@see resolveContentDelivery()} (or the rendition service, after the same checks)
+     * answered just now: the signed URL and the facts. Never called with a delivery that was not checked for the
+     * current caller.
+     *
+     * @throws InternalErrorException
+     */
+    public function createContentGrantOfDelivery(DriveContentDelivery $driveContentDelivery): DriveContentGrant
+    {
         $driveContentToken = $this->buildContentToken($driveContentDelivery->driveNodeId, $driveContentDelivery->driveFileVersionId, $driveContentDelivery->purpose);
 
         $driveContentGrant = new DriveContentGrant();
@@ -134,6 +146,8 @@ class DriveContentGrantsService extends Service
      * Checks that the current caller may read a file's released version for `$purpose` and answers what to serve:
      * the read right on the space, the variant rule, a released blob (never one waiting for or refused by its scan),
      * the inline type (raster, PDF, plain text, an SVG only as its sanitised copy; everything else an attachment).
+     * RENDITION serves the stored PDF rendition of an Office file ({@see DriveOfficeRenditionsService}) inline and
+     * answers not found while there is none: only the rendition endpoint starts a conversion.
      * Called when a grant is made and again on every fetch of its URL.
      *
      * @throws NotFoundException
@@ -143,37 +157,14 @@ class DriveContentGrantsService extends Service
      */
     public function resolveContentDelivery(DriveNode $driveNode, string $purpose, ?DriveFileVersion $driveFileVersion = null): DriveContentDelivery
     {
-        if (!in_array($purpose, DriveContentGrant::PEOPLE_PURPOSES, true)) {
-            throw new BadRequestException('Content for people is granted for DOWNLOAD, INLINE or THUMBNAIL.');
-        }
-        $driveSpacesService = $this->getDriveSpacesService();
-        $driveSpacesService->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
-        if (!$driveNode->isFile()) {
-            throw new BadRequestException('Only a file has content.');
-        }
-        if (!$this->isVariantAllowed($driveNode, $purpose, $driveSpacesService->getCurrentAudience())) {
-            throw new ForbiddenException($driveNode->isTrashed()
-                ? 'The file is in the trash: only the staff can download it.'
-                : sprintf('The %s variant of this file is not available.', strtolower($purpose)));
-        }
-        $driveFileVersion ??= $driveNode->currentVersionId !== null ? $this->getDriveVersionsService()->find((int)$driveNode->currentVersionId, false) : null;
-        if (!$driveFileVersion instanceof DriveFileVersion || $driveFileVersion->driveNodeId !== $driveNode->id) {
-            throw new NotFoundException('The file has no released version yet (it waits for its scan).');
-        }
-        $driveBlob = $this->getDriveBlobsService()->find((int)$driveFileVersion->driveBlobId, false);
-        if (!$driveBlob instanceof DriveBlob || !$driveBlob->isReadableByPeople()) {
-            throw new ForbiddenException(match ($driveBlob?->state) {
-                DriveBlob::STATE_BLOCKED => $driveBlob->findScanStatus() === DriveBlob::SCAN_STATUS_BLOCKED
-                    ? 'The file was refused by the type rules of this space.'
-                    : 'The file was blocked by the malware scan.',
-                DriveBlob::STATE_SCAN_FAILED => 'The malware scan could not run yet; the file is scanned again shortly.',
-                default => 'The version is not released yet (it waits for its scan).',
-            });
-        }
-        // a blob stored without a telling type (older writes kept only the writer's claim) gets it from its bytes once
-        // and keeps it: a PDF an agent wrote opens inline like an uploaded one
-        if (DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
-            $driveBlob = $this->getDriveBlobsService()->detectAndStoreContentTypeOfStoredBlob($driveBlob, (string)$driveNode->name);
+        $driveFileVersion = $this->resolveReadableVersion($driveNode, $purpose, $driveFileVersion);
+        $driveBlob = $this->resolveReadableBlobOfVersion($driveNode, $driveFileVersion);
+        if ($purpose === DriveContentGrant::PURPOSE_RENDITION) {
+            $renditionDelivery = $this->getDriveOfficeRenditionsService()->findRenditionDelivery($driveNode, $driveFileVersion, $driveBlob);
+            if ($renditionDelivery === null) {
+                throw new NotFoundException('This file has no PDF rendition (yet).');
+            }
+            return $renditionDelivery;
         }
         $driveContentDelivery = new DriveContentDelivery();
         $driveContentDelivery->driveNodeId = (int)$driveNode->id;
@@ -202,6 +193,63 @@ class DriveContentGrantsService extends Service
     }
 
     /**
+     * The first half of the content checks: a people purpose, the read right on the file's space, a file, the variant
+     * rule (trash), and the version to read (the given one, else the current one) belonging to the file.
+     *
+     * @throws NotFoundException
+     * @throws ForbiddenException
+     * @throws BadRequestException
+     */
+    public function resolveReadableVersion(DriveNode $driveNode, string $purpose, ?DriveFileVersion $driveFileVersion = null): DriveFileVersion
+    {
+        if (!in_array($purpose, DriveContentGrant::PEOPLE_PURPOSES, true)) {
+            throw new BadRequestException('Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION.');
+        }
+        $driveSpacesService = $this->getDriveSpacesService();
+        $driveSpacesService->requireSpaceWithRight((int)$driveNode->driveSpaceId, DBDriveSpace::RIGHT_READ);
+        if (!$driveNode->isFile()) {
+            throw new BadRequestException('Only a file has content.');
+        }
+        if (!$this->isVariantAllowed($driveNode, $purpose, $driveSpacesService->getCurrentAudience())) {
+            throw new ForbiddenException($driveNode->isTrashed()
+                ? 'The file is in the trash: only the staff can download it.'
+                : sprintf('The %s variant of this file is not available.', strtolower($purpose)));
+        }
+        $driveFileVersion ??= $driveNode->currentVersionId !== null ? $this->getDriveVersionsService()->find((int)$driveNode->currentVersionId, false) : null;
+        if (!$driveFileVersion instanceof DriveFileVersion || $driveFileVersion->driveNodeId !== $driveNode->id) {
+            throw new NotFoundException('The file has no released version yet (it waits for its scan).');
+        }
+        return $driveFileVersion;
+    }
+
+    /**
+     * The second half of the content checks: the version's blob, released for people (never one waiting for or
+     * refused by its scan). A blob stored without a telling type gets it from its bytes here, once.
+     *
+     * @throws ForbiddenException
+     * @throws InternalErrorException
+     */
+    public function resolveReadableBlobOfVersion(DriveNode $driveNode, DriveFileVersion $driveFileVersion): DriveBlob
+    {
+        $driveBlob = $this->getDriveBlobsService()->find((int)$driveFileVersion->driveBlobId, false);
+        if (!$driveBlob instanceof DriveBlob || !$driveBlob->isReadableByPeople()) {
+            throw new ForbiddenException(match ($driveBlob?->state) {
+                DriveBlob::STATE_BLOCKED => $driveBlob->findScanStatus() === DriveBlob::SCAN_STATUS_BLOCKED
+                    ? 'The file was refused by the type rules of this space.'
+                    : 'The file was blocked by the malware scan.',
+                DriveBlob::STATE_SCAN_FAILED => 'The malware scan could not run yet; the file is scanned again shortly.',
+                default => 'The version is not released yet (it waits for its scan).',
+            });
+        }
+        // a blob stored without a telling type (older writes kept only the writer's claim) gets it from its bytes once
+        // and keeps it: a PDF an agent wrote opens inline like an uploaded one
+        if (DriveBlobsService::isContentTypeUnknown($driveBlob->contentType)) {
+            $driveBlob = $this->getDriveBlobsService()->detectAndStoreContentTypeOfStoredBlob($driveBlob, (string)$driveNode->name);
+        }
+        return $driveBlob;
+    }
+
+    /**
      * The type a released blob of `$contentType` is served inline as, or null when it is only ever an attachment:
      * JPEG, PNG, GIF, WebP and PDF in their own type, the plain texts of {@see TEXT_INLINE_SOURCE_CONTENT_TYPES} as
      * `text/plain; charset=utf-8`. HTML, SVG (only through its sanitised copy), XML, JavaScript and every other type:
@@ -224,7 +272,7 @@ class DriveContentGrantsService extends Service
     }
 
     /**
-     * Whether `$audience` may read the `$variant` (DOWNLOAD, INLINE, THUMBNAIL) of a file. Default: every variant of a
+     * Whether `$audience` may read the `$variant` (DOWNLOAD, INLINE, THUMBNAIL, RENDITION) of a file. Default: every variant of a
      * live file; of a trashed file only the staff's download. Override in the application (same-path subclass) for
      * other rules (e.g. originals of a kind only for the staff).
      */
@@ -326,6 +374,7 @@ class DriveContentGrantsService extends Service
                     if ($inlineGrant->isInline && UntrustedContentHeaders::isInlineContentType($driveFileCard->contentType)) {
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
+                    $driveFileCard->hasPdfRendition = $this->getDriveOfficeRenditionsService()->isRenditionOffered($driveNode, $downloadGrant->sizeBytes, $driveFileCard->contentType);
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {
                     $driveFileCard->state = str_contains($grantRefusal->getMessage(), 'blocked') ? 'blocked' : 'pending scan';
                 }
@@ -404,5 +453,12 @@ class DriveContentGrantsService extends Service
         /** @var DriveBlobsService $driveBlobsService */
         $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
         return $driveBlobsService;
+    }
+
+    protected function getDriveOfficeRenditionsService(): DriveOfficeRenditionsService
+    {
+        /** @var DriveOfficeRenditionsService $driveOfficeRenditionsService */
+        $driveOfficeRenditionsService = DDDService::instance()->getService(DriveOfficeRenditionsService::class);
+        return $driveOfficeRenditionsService;
     }
 }

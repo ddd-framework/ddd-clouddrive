@@ -29,6 +29,8 @@ import type {
   DriveTrashArg,
   DriveVersionRestoreArg,
   DriveContentGrantResponse,
+  DriveRenditionArg,
+  DriveRenditionResponse,
   DriveFileCardsArg,
   DriveFileCardsResponse,
   DriveFolderCreateArg,
@@ -77,6 +79,8 @@ export interface CloudDriveApi {
   useCompleteDriveUploadMutation: ApiMutationHook<DriveUploadCompleteArg, DriveNodeResponse>;
   /** `GET /nodes/{id}/content?purpose&versionId`: a short-lived content URL (not cached). */
   useDriveContentMutation: ApiMutationHook<DriveContentArg, DriveContentGrantResponse>;
+  /** `GET /nodes/{id}/rendition?versionId`: the PDF the server renders of a document, or its state (not cached). */
+  useDriveRenditionMutation: ApiMutationHook<DriveRenditionArg, DriveRenditionResponse>;
   /** `POST /nodes/{id}/move`. */
   useMoveDriveNodeMutation: ApiMutationHook<DriveNodeMoveArg, DriveNodeResponse>;
   /** `POST /nodes/{id}/trash`. */
@@ -187,6 +191,9 @@ export const buildCloudDriveRequests = (apiPrefix: string) => {
     content: ({ driveNodeId, purpose, versionId }: DriveContentArg): InjectedRequest => ({
       url: `${prefix}/nodes/${idOf(driveNodeId)}/content${toQueryString({ purpose, versionId })}`,
     }),
+    rendition: ({ driveNodeId, versionId }: DriveRenditionArg): InjectedRequest => ({
+      url: `${prefix}/nodes/${idOf(driveNodeId)}/rendition${toQueryString({ versionId })}`,
+    }),
     move: ({ driveNodeId, ...body }: DriveNodeMoveArg): InjectedRequest => ({ url: `${prefix}/nodes/${idOf(driveNodeId)}/move`, method: 'POST', body }),
     trash: ({ driveNodeId }: DriveNodeIdArg): InjectedRequest => ({ url: `${prefix}/nodes/${idOf(driveNodeId)}/trash`, method: 'POST' }),
     restore: ({ driveNodeId }: DriveNodeIdArg): InjectedRequest => ({ url: `${prefix}/nodes/${idOf(driveNodeId)}/restore`, method: 'POST' }),
@@ -213,6 +220,7 @@ export const cloudDriveEndpointDefinitions = (apiPrefix: string) => {
     adminUiDriveUploadState: { kind: 'mutation', request: requests.uploadState },
     adminUiDriveUploadComplete: { kind: 'mutation', request: requests.completeUpload, invalidatesTags: [NODES, SPACES] },
     adminUiDriveContent: { kind: 'mutation', request: requests.content },
+    adminUiDriveRendition: { kind: 'mutation', request: requests.rendition },
     adminUiDriveNodeMove: { kind: 'mutation', request: requests.move, invalidatesTags: [NODES] },
     adminUiDriveNodeTrash: { kind: 'mutation', request: requests.trash, invalidatesTags: [NODES, SPACES] },
     adminUiDriveNodeRestore: { kind: 'mutation', request: requests.restore, invalidatesTags: [NODES, SPACES] },
@@ -255,6 +263,7 @@ const injectCloudDriveEndpoints = (baseApi: InjectableBaseApi, apiPrefix: string
     useDriveUploadStateMutation: hookOf('adminUiDriveUploadState') as CloudDriveApi['useDriveUploadStateMutation'],
     useCompleteDriveUploadMutation: hookOf('adminUiDriveUploadComplete') as CloudDriveApi['useCompleteDriveUploadMutation'],
     useDriveContentMutation: hookOf('adminUiDriveContent') as CloudDriveApi['useDriveContentMutation'],
+    useDriveRenditionMutation: hookOf('adminUiDriveRendition') as CloudDriveApi['useDriveRenditionMutation'],
     useMoveDriveNodeMutation: hookOf('adminUiDriveNodeMove') as CloudDriveApi['useMoveDriveNodeMutation'],
     useTrashDriveNodeMutation: hookOf('adminUiDriveNodeTrash') as CloudDriveApi['useTrashDriveNodeMutation'],
     useRestoreDriveNodeMutation: hookOf('adminUiDriveNodeRestore') as CloudDriveApi['useRestoreDriveNodeMutation'],
@@ -309,6 +318,7 @@ export const createStaticCloudDriveApi = (data: StaticCloudDriveData): CloudDriv
   useDriveUploadStateMutation: staticMutationHook(NOT_AVAILABLE),
   useCompleteDriveUploadMutation: staticMutationHook(NOT_AVAILABLE),
   useDriveContentMutation: staticMutationHook(NOT_AVAILABLE),
+  useDriveRenditionMutation: staticMutationHook(NOT_AVAILABLE),
   useMoveDriveNodeMutation: staticMutationHook(NOT_AVAILABLE),
   useTrashDriveNodeMutation: staticMutationHook(NOT_AVAILABLE),
   useRestoreDriveNodeMutation: staticMutationHook(NOT_AVAILABLE),

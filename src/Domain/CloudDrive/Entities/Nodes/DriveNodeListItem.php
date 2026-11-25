@@ -76,6 +76,9 @@ class DriveNodeListItem extends ValueObject
     /** @var string|null A short-lived inline URL of a released JPEG, PNG, GIF or WebP */
     public ?string $thumbnailUrl = null;
 
+    /** @var bool The server offers a PDF rendition of this released Office file (`GET …/nodes/{id}/rendition`) */
+    public bool $hasPdfRendition = false;
+
     public ?int $createdByAccountId = null;
 
     /** @var string|null The creator's display name (the application's names; null when it gives none) */

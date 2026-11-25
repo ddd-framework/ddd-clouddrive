@@ -6,6 +6,7 @@ namespace DDD\Tests\CloudDrive\Domain\CloudDrive\Fakes;
 
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
+use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 
@@ -32,6 +33,12 @@ class TransferTestDriveContentGrantsService extends DriveContentGrantsService
     protected function getDriveBlobsService(): DriveBlobsService
     {
         return $this->testDriveBlobsService;
+    }
+
+    /** The stored renditions of the test's object store (nothing is ever converted here) */
+    protected function getDriveOfficeRenditionsService(): DriveOfficeRenditionsService
+    {
+        return new RenditionTestDriveOfficeRenditionsService($this, $this->testDriveBlobsService, new TransferTestDriveNodesService());
     }
 
     protected function findCurrentAccountId(): ?int

@@ -935,15 +935,31 @@ class DriveBlobsService extends EntitiesService
             $objectStorage->abortMultipartUpload((string)$driveBlob->storageKey, $driveBlob->multipartUploadId);
         }
         $objectStorage->deleteObject((string)$driveBlob->storageKey);
-        if (UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === DriveContentGrantsService::SVG_CONTENT_TYPE) {
-            $objectStorage->deleteObject(static::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey));
-        }
+        $this->deleteDerivedObjects($driveBlob);
         $this->getDriveSpacesService()->releaseBytes((int)$driveBlob->driveSpaceId, (int)$driveBlob->sizeBytes);
         DDDService::instance()->deactivateEntityRightsRestrictions();
         try {
             $driveBlob->delete();
         } finally {
             DDDService::instance()->restoreEntityRightsRestrictionsStateSnapshot();
+        }
+    }
+
+    /**
+     * Deletes what was derived from a blob and stored next to it: the sanitised copy of an SVG, and the PDF rendition
+     * of an Office file with its markers ({@see DriveOfficeRenditionsService}). Asked only for the types that can
+     * have them, so the purge of any other blob costs no extra request.
+     *
+     * @throws InternalErrorException
+     */
+    public function deleteDerivedObjects(DriveBlob $driveBlob): void
+    {
+        $objectStorage = $this->getObjectStorage();
+        if (UntrustedContentHeaders::normalizeContentType($driveBlob->contentType) === DriveContentGrantsService::SVG_CONTENT_TYPE) {
+            $objectStorage->deleteObject(static::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey));
+        }
+        if (DriveOfficeRenditionsService::isRenditionSourceContentType($driveBlob->contentType)) {
+            $objectStorage->deleteObjects(DriveOfficeRenditionsService::buildDerivedStorageKeys((string)$driveBlob->storageKey));
         }
     }
 
