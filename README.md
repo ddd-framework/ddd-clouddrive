@@ -195,6 +195,19 @@ composer require mgamadeus/ddd-clouddrive async-aws/s3
    the sandbox's workspace key is not on every call (without a key the tools use the own drive's newest working copy).
    A working copy entry's `conversationKey` is the id of the delegation tree's root conversation. A partner's file
    area folds into `CloudDrive.Files`: mount its space, name the mount in the host's skill override.
+8. With ddd-agents ≥ 0.5.0, `php bin/console app:agent:check-installation` covers the drive:
+   - **`driveRenditions`** — `officeRenditions.enabled` is on but `DriveOfficeRenditionMessage` is routed to no
+     transport a worker consumes (`findRenditionRoutingProblem()`). BLOCKING: the rendition route then answers
+     `FAILED` (`NOT_ROUTED_TO_WORKER`) for every file without a stored PDF. A WARNING where this environment starts no
+     conversion (`DriveBlobsService::isDerivedObjectWriteAllowed()` answers false), since only stored PDFs are served
+     there anyway.
+   - **`missingTables`** — the drive's tables are required only while the drive is enabled, i.e. its object store
+     (`objectStorageName`, default `clouddrive`) is configured (`DriveFeatureTableConditionProviderService`; a store
+     whose configuration is broken counts as enabled). A host that installs the package without setting up the store
+     gets no missing-table finding for it.
+   Both register only beside ddd-agents ≥ 0.5.0 (`Services\Installation\` in
+   `CloudDriveModule::getNamespacesRequiringClasses()`); `skippedChecks: ['driveRenditions']` in
+   `config/app/AI/installationCheck.php` switches the check off.
 
 `app:drive:spaces:create` creates a library space.
 
@@ -247,7 +260,7 @@ The host provides:
   to no asynchronous transport (no routing entry, or a `sync://` / `in-memory://` transport) the route answers a
   stored state and otherwise `FAILED` (`NOT_ROUTED_TO_WORKER`), dispatches nothing and writes one warning per process
   to the issues log. `DriveOfficeRenditionsService::findRenditionRoutingProblem()` says it as a sentence (null when
-  nothing is wrong) for a host's installation or health check. A console command still converts in-process.
+  nothing is wrong) for a host's installation or health check; with ddd-agents ≥ 0.5.0 `app:agent:check-installation` reports it (check `driveRenditions`). A console command still converts in-process.
   The consumer goes into the worker list (`config/system/workers.yaml`) in the same change as the transport: a
   consumer line without its transport crash-loops.
 - **Route classification.** `GET …/rendition` is a read for the viewer (read-only viewers and impersonating admins get

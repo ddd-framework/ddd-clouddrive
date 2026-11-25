@@ -34,6 +34,10 @@ below `Services\AI\Browser\` needs ddd-agent-browser as well. The skill is `Clou
 `clouddrive.files` (the skill name in lower case); hosts bind it by class. The drive store's name `clouddrive`
 (`CloudDriveAgentDriveStoreService::STORE_NAME`) is stored in widget payloads and never changes. New tables of the agent
 part degrade: a missing table answers "none" (`AgentSpaceDriveSpacesService::isTableAvailable()`), never an error.
+`Services\Installation\` takes part in `app:agent:check-installation` of ddd-agents ≥ 0.5.0 and is keyed to its port
+`AgentFeatureTableConditionProvider`: `DriveRenditionsInstallationCheckService` (check `driveRenditions`) and
+`DriveFeatureTableConditionProviderService` (every DB entity of the package in `DRIVE_TABLE_ENTITY_CLASSES`, required
+only while the drive's object store is configured; a test fails when a new entity is missing there).
 
 ## Untrusted Input (mandatory)
 

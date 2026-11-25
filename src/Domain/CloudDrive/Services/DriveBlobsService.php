@@ -57,6 +57,9 @@ class DriveBlobsService extends EntitiesService
 
     public const DEFAULT_ENTITY_CLASS = DriveBlob::class;
 
+    /** @var string The object store of the file bytes when `CloudDrive.settings.objectStorageName` is not set */
+    public const string DEFAULT_OBJECT_STORAGE_NAME = 'clouddrive';
+
     public const int MAX_PARTS = 10000;
     public const int MIN_PART_BYTES = 5 * 1024 * 1024;
 
@@ -995,12 +998,18 @@ class DriveBlobsService extends EntitiesService
         return max($configuredPartBytes, (int)ceil($sizeBytes / self::MAX_PARTS));
     }
 
+    /** The name of the object store of the file bytes (`CloudDrive.settings.objectStorageName`, default `clouddrive`) */
+    public function getObjectStorageName(): string
+    {
+        return (string)(Config::get('CloudDrive.settings.objectStorageName') ?: self::DEFAULT_OBJECT_STORAGE_NAME);
+    }
+
     /**
      * @throws InternalErrorException
      */
     public function getObjectStorage(): ObjectStorage
     {
-        $storeName = (string)(Config::get('CloudDrive.settings.objectStorageName') ?: 'clouddrive');
+        $storeName = $this->getObjectStorageName();
         /** @var ObjectStorageService $objectStorageService */
         $objectStorageService = DDDService::instance()->getService(ObjectStorageService::class);
         $objectStorage = $objectStorageService->getObjectStorage($storeName);

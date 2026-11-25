@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.2
+
+The drive takes part in `app:agent:check-installation` of `mgamadeus/ddd-agents` ≥ 0.5.0 (registered only beside it,
+`Services\Installation\` keyed to its port `AgentFeatureTableConditionProvider`). No table change, PHP API otherwise
+unchanged; the npm package is unchanged apart from its version.
+
+- **Check `driveRenditions`** (`DriveRenditionsInstallationCheckService`): `officeRenditions.enabled` is on but
+  `DriveOfficeRenditionMessage` is routed to no transport a worker consumes — the sentence of
+  `DriveOfficeRenditionsService::findRenditionRoutingProblem()`. BLOCKING, since the rendition route then answers
+  `FAILED` (`NOT_ROUTED_TO_WORKER`) for every file without a stored PDF; a WARNING where this environment starts no
+  conversion (the switch for derived objects, or the deprecated `isConversionStartAllowed()`, answers false). Nothing
+  is reported with renditions off or routed to a worker.
+- **Tables only while the drive is enabled** (`DriveFeatureTableConditionProviderService`): `missingTables` requires
+  the drive's tables (every DB entity of the package, `DRIVE_TABLE_ENTITY_CLASSES`) only while the drive's object
+  store (`CloudDrive.settings.objectStorageName`) is configured; a store whose configuration throws counts as enabled.
+  Before, every drive table was required on every host with the check (ddd-agents ≥ 0.4.0).
+- `DriveBlobsService::getObjectStorageName()` and `DEFAULT_OBJECT_STORAGE_NAME`.
+- `mgamadeus/ddd-agents` ^0.5.5 as dev version (the suite runs against it); the conflict stays `<0.3.13`, so 0.3.14
+  up to 0.5.x install. `isConversionStartAllowed()` stays deprecated and is removed in 0.5.0.
+
 ## 0.4.1
 
 Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.1 for the picture of an SVG. No table change.

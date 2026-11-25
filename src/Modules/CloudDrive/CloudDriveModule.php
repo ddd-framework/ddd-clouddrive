@@ -23,6 +23,12 @@ class CloudDriveModule extends DDDModule
     /** @var string The file sink port of ddd-agent-browser ≥ 0.2.0: the drive's browser sink registers only beside it */
     public const string BROWSER_FILE_SINK_CLASS = 'DDD\\Domain\\AI\\Services\\Browser\\BrowserFileSink';
 
+    /**
+     * @var string The table condition port of ddd-agents (>= 0.5.0, which also has the installation check port): the
+     *     drive's installation check and table conditions register only beside it
+     */
+    public const string FEATURE_TABLE_CONDITION_PROVIDER_CLASS = 'DDD\\Domain\\AI\\Services\\Installation\\AgentFeatureTableConditionProvider';
+
     public static function getSourcePath(): string
     {
         return __DIR__ . '/../..';
@@ -56,6 +62,8 @@ class CloudDriveModule extends DDDModule
             'DDD\\Domain\\CloudDrive\\Entities\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Repo\\DB\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Presentation\\Mcp\\Client\\CloudDrive\\' => self::AGENTS_PACKAGE_CLASS,
+            // app:agent:check-installation of ddd-agents >= 0.5.0: the rendition check and the drive's table conditions
+            'DDD\\Domain\\CloudDrive\\Services\\Installation\\' => self::FEATURE_TABLE_CONDITION_PROVIDER_CLASS,
         ];
     }
 }
