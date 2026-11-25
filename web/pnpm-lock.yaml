@@ -167,11 +167,11 @@ importers:
   .:
     devDependencies:
       '@mgamadeus/ddd-admin-ui':
-        specifier: ^0.5.5
-        version: 0.5.5(@mgamadeus/ddd-web@0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(lucide-react@1.77.0(@types/react@19.3.0)(react@19.3.1))(radix-ui@1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-hook-form@7.92.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(zod@4.6.7)
+        specifier: ^0.8.0
+        version: 0.8.0(@mgamadeus/ddd-web@0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(lucide-react@1.77.0(@types/react@19.3.0)(react@19.3.1))(radix-ui@1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-hook-form@7.92.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(zod@4.6.7)
       '@mgamadeus/ddd-agents':
-        specifier: ^0.1.38
-        version: 0.1.38(@types/google.maps@3.67.0)(apexcharts@3.54.1)(dompurify@3.5.0)(highlight.js@11.12.0)(katex@0.19.1)(mermaid@12.3.0)(react-apexcharts@1.5.0(apexcharts@3.54.1)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(remark-directive@4.0.0)(remark-gfm@4.0.1)(remark-parse@11.0.0)(unified@11.0.5)(unist-util-visit@5.2.0)
+        specifier: ^0.3.14
+        version: 0.3.14(@types/google.maps@3.67.0)(apexcharts@3.54.1)(dompurify@3.5.0)(highlight.js@11.12.0)(katex@0.19.1)(mermaid@12.3.0)(react-apexcharts@1.5.0(apexcharts@3.54.1)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(remark-directive@4.0.0)(remark-gfm@4.0.1)(remark-parse@11.0.0)(unified@11.0.5)(unist-util-visit@5.2.0)
       '@mgamadeus/ddd-web':
         specifier: ^0.13.0
         version: 0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3)
@@ -457,8 +457,8 @@ packages:
     resolution: {integrity: sha512-j37dj/h6p6pots1L7pLPPNuABEEu9WP4OYg9pW1g+nYG331j0+3canE9OagtYdytYvdSAMG+2fKU5cxep6LgjA==}
     engines: {node: '>=22.12.0'}
 
-  '@mgamadeus/ddd-admin-ui@0.5.5':
-    resolution: {integrity: sha512-G1bRaIxD/XkbM0qaYyjwNELSpzGmp+hztFh3UIYQV1egSlGOfFgTfTAkRSdfnGmxrAOE/N0/5XqwwKUd1ln6gA==}
+  '@mgamadeus/ddd-admin-ui@0.8.0':
+    resolution: {integrity: sha512-RCw4MqH/jiGOR/6RCRjfn78FD1x23i9xK3MjaejtEPVsrJtnZ1MXefb8D4zKGDeNskapqxr3k8VETF1YjqmiVg==}
     engines: {node: '>=20'}
     hasBin: true
     peerDependencies:
@@ -486,8 +486,8 @@ packages:
       tailwindcss:
         optional: true
 
-  '@mgamadeus/ddd-agents@0.1.38':
-    resolution: {integrity: sha512-+H5kkiw2X4lG1xqNnbTuF38r7UBRpgoRxfCvD1ZyvV8s+VzU3ot4t/jg7Yg3+KqpVXP+drmsLl/HqVU196BNfw==}
+  '@mgamadeus/ddd-agents@0.3.14':
+    resolution: {integrity: sha512-T7gDnHQWf7STwAFPHMRZA8ouPNtwbhfv8gmeTzYrxf9VC7TmSM3lYZD/SmiZofyUpk/2+tF8yhd3cQk/rTLOSQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@types/google.maps': ^3.55.0
@@ -2911,7 +2911,7 @@ snapshots:
     dependencies:
       '@chevrotain/types': 13.2.0
 
-  '@mgamadeus/ddd-admin-ui@0.5.5(@mgamadeus/ddd-web@0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(lucide-react@1.77.0(@types/react@19.3.0)(react@19.3.1))(radix-ui@1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-hook-form@7.92.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(zod@4.6.7)':
+  '@mgamadeus/ddd-admin-ui@0.8.0(@mgamadeus/ddd-web@0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(lucide-react@1.77.0(@types/react@19.3.0)(react@19.3.1))(radix-ui@1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-hook-form@7.92.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(zod@4.6.7)':
     dependencies:
       '@mgamadeus/ddd-web': 0.13.0(@oazapfts/runtime@1.2.0)(@reduxjs/toolkit@2.15.0(@types/react@19.3.0)(react-redux@9.3.1(@types/react@19.3.0)(react@19.3.1)(redux@5.0.1))(react@19.3.1))(openapi-types@12.1.3)
       class-variance-authority: 0.7.1
@@ -2928,7 +2928,7 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
-  '@mgamadeus/ddd-agents@0.1.38(@types/google.maps@3.67.0)(apexcharts@3.54.1)(dompurify@3.5.0)(highlight.js@11.12.0)(katex@0.19.1)(mermaid@12.3.0)(react-apexcharts@1.5.0(apexcharts@3.54.1)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(remark-directive@4.0.0)(remark-gfm@4.0.1)(remark-parse@11.0.0)(unified@11.0.5)(unist-util-visit@5.2.0)':
+  '@mgamadeus/ddd-agents@0.3.14(@types/google.maps@3.67.0)(apexcharts@3.54.1)(dompurify@3.5.0)(highlight.js@11.12.0)(katex@0.19.1)(mermaid@12.3.0)(react-apexcharts@1.5.0(apexcharts@3.54.1)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-markdown@10.1.0(@types/react@19.3.0)(react@19.3.1))(react@19.3.1)(remark-directive@4.0.0)(remark-gfm@4.0.1)(remark-parse@11.0.0)(unified@11.0.5)(unist-util-visit@5.2.0)':
     dependencies:
       '@types/google.maps': 3.67.0
       apexcharts: 3.54.1
