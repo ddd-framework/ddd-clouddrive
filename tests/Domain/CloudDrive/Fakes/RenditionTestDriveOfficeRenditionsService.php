@@ -11,6 +11,7 @@ use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
+use DDD\Domain\Common\Services\WorkerTransportsService;
 use RuntimeException;
 
 /**
@@ -30,6 +31,18 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
 
     /** @var bool A host that routes the message nowhere: the dispatch converts at once */
     public bool $isRenderedOnDispatch = false;
+
+    /** @var bool true = the request runs as a web request (PHP-FPM), false = on the command line, as PHPUnit does */
+    public bool $isWebRequestForTest = false;
+
+    /** @var WorkerTransportsService The host's Messenger routing; default: none (the message is handled in-process) */
+    public WorkerTransportsService $testWorkerTransportsService;
+
+    /** @var string[] The routing problems written to the issues log */
+    public array $loggedRenditionRoutingProblems = [];
+
+    /** @var bool|null A host's same-path override of the deprecated hook; null = the package's default (the switch) */
+    public ?bool $isConversionStartAllowedOverride = null;
 
     /** @var string|null What the converter writes as its PDF; null = it writes nothing */
     public ?string $convertedBytes = "%PDF-1.7\nfake rendition";
@@ -58,6 +71,29 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
     ) {
         $this->testSettings = new DriveOfficeRenditionSettings();
         $this->testSettings->enabled = true;
+        $this->testWorkerTransportsService = new WorkerTransportsService();
+        // every test starts as a fresh process: the routing warning has not been written yet
+        static::$isRenditionRoutingProblemLogged = false;
+    }
+
+    public function isConversionStartAllowed(): bool
+    {
+        return $this->isConversionStartAllowedOverride ?? parent::isConversionStartAllowed();
+    }
+
+    protected function isConversionInsideThisProcessAllowed(): bool
+    {
+        return !$this->isWebRequestForTest && parent::isConversionInsideThisProcessAllowed();
+    }
+
+    protected function logRenditionRoutingProblem(string $renditionRoutingProblem): void
+    {
+        $this->loggedRenditionRoutingProblems[] = $renditionRoutingProblem;
+    }
+
+    protected function getWorkerTransportsService(): WorkerTransportsService
+    {
+        return $this->testWorkerTransportsService;
     }
 
     public function getSettings(): DriveOfficeRenditionSettings

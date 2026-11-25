@@ -243,8 +243,11 @@ starts one.
 
 The host provides:
 - **Transport and consumer.** Route `DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage` to the transport
-  `drive_render` and run a consumer for it. A message routed nowhere is converted inside the web request: switch the
-  setting on only together with the routing and the consumer.
+  `drive_render` and run a consumer for it. A conversion never runs inside a web request: while the message is routed
+  to no asynchronous transport (no routing entry, or a `sync://` / `in-memory://` transport) the route answers a
+  stored state and otherwise `FAILED` (`NOT_ROUTED_TO_WORKER`), dispatches nothing and writes one warning per process
+  to the issues log. `DriveOfficeRenditionsService::findRenditionRoutingProblem()` says it as a sentence (null when
+  nothing is wrong) for a host's installation or health check. A console command still converts in-process.
   The consumer goes into the worker list (`config/system/workers.yaml`) in the same change as the transport: a
   consumer line without its transport crash-loops.
 - **Route classification.** `GET …/rendition` is a read for the viewer (read-only viewers and impersonating admins get
@@ -279,7 +282,9 @@ answered for twice as long is dispatched again), `maxPages` (300), `binary` (`so
 could not start), then the next request tries again.
 
 **A host whose reads must write nothing** (a workspace that reads another environment's store and queue) overrides
-`DriveBlobsService::isDerivedObjectWriteAllowed()` in a same-path subclass. It is the one switch for every object the
+`DriveBlobsService::isDerivedObjectWriteAllowed()` in a same-path subclass. (The rendition hook of 0.4.0,
+`DriveOfficeRenditionsService::isConversionStartAllowed()`, is deprecated, still honoured for the rendition and
+removed in 0.5.0; its default answers this switch.) It is the one switch for every object the
 drive derives from a blob while a file is only read. Where it answers false, the rendition route serves a stored PDF
 and otherwise `FAILED` ("This file has no PDF preview yet, and none is created in this environment."): no marker is
 read, written or removed and nothing is dispatched. An SVG is served as its sanitised copy only when the copy

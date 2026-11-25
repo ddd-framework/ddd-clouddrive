@@ -4,10 +4,21 @@
 
 Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.1 for the picture of an SVG. No table change.
 
-**Hook renamed.** A host that overrides `DriveOfficeRenditionsService::isConversionStartAllowed()` (0.4.0) moves the
-override to `DriveBlobsService::isDerivedObjectWriteAllowed()` (a same-path subclass of the blobs service, with its
-service alias). The old method is gone; an override of it is no longer asked.
-
+- **Deprecated, still honoured, removed in 0.5.0:** `DriveOfficeRenditionsService::isConversionStartAllowed()`. The
+  rendition route still asks it, and its default now answers `DriveBlobsService::isDerivedObjectWriteAllowed()`, so a
+  host's 0.4.0 same-path override keeps deciding for the rendition. The sanitised SVG copy asks only the new switch.
+  Move the override to `DriveBlobsService::isDerivedObjectWriteAllowed()` (a same-path subclass of the blobs service,
+  with its service alias) before 0.5.0.
+- **A conversion never runs inside a web request.** With `officeRenditions.enabled` on and
+  `DriveOfficeRenditionMessage` routed to no asynchronous transport (no routing entry, or a `sync://` /
+  `in-memory://` transport), Messenger would convert inside the request. The rendition route of a web request then
+  answers a stored state (a PDF that exists stays READY) and otherwise `FAILED` with the reason code
+  `NOT_ROUTED_TO_WORKER` ("This file has no PDF preview yet: PDF previews are not set up to be created in the
+  background here."), writes no marker and dispatches nothing; the issues log gets one warning per process. The
+  routing is read from the compiled container (Core's `WorkerTransportsService`, matched as Messenger's senders
+  locator matches: the class, a parent class, an interface, `*`). The command line (a console command, a worker)
+  still converts in-process. `DriveOfficeRenditionsService::isRenditionMessageRoutedToWorker()` and
+  `findRenditionRoutingProblem()` (a sentence, or null) are public for a host's installation or health check.
 - `DriveBlobsService::isDerivedObjectWriteAllowed()` (default true) is the host's one switch for an environment whose
   reads must leave store and queue untouched (a workspace on another environment's data). It covers every object the
   drive derives from a blob while a file is only read: there the rendition route only serves a stored PDF (`FAILED`

@@ -14,19 +14,23 @@ use DDD\Domain\CloudDrive\Entities\Renditions\DriveOfficeRenditionMarker;
 use DDD\Domain\CloudDrive\Entities\Renditions\DriveOfficeRenditionSettings;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Exceptions\DriveOfficeRenditionFailedException;
+use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionHandler;
 use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage;
+use DDD\Domain\Common\Services\WorkerTransportsService;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\InternalErrorException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\ObjectStorage\ObjectStorage;
 use DDD\Infrastructure\Services\DDDService;
+use DDD\Infrastructure\Services\IssuesLogService;
 use DDD\Infrastructure\Services\Service;
 use DDD\Infrastructure\Untrusted\ArchiveInspection;
 use DDD\Infrastructure\Untrusted\ArchiveInspector;
 use DDD\Infrastructure\Untrusted\IsolatedProcess;
 use DDD\Infrastructure\Untrusted\UntrustedContentException;
 use DDD\Infrastructure\Untrusted\UntrustedContentHeaders;
+use Psr\Log\LogLevel;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
 use Throwable;
@@ -111,6 +115,14 @@ class DriveOfficeRenditionsService extends Service
     public const string FAILURE_UNAVAILABLE = 'UNAVAILABLE';
     /** Never stored: the answer where no conversion is started ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}) */
     public const string FAILURE_NOT_STARTED_HERE = 'NOT_STARTED_HERE';
+    /**
+     * Never stored: the answer of a web request when {@see DriveOfficeRenditionMessage} is routed to no asynchronous
+     * transport, so Messenger would convert inside the request ({@see isRenditionMessageRoutedToWorker()})
+     */
+    public const string FAILURE_NOT_ROUTED_TO_WORKER = 'NOT_ROUTED_TO_WORKER';
+
+    /** The routing key of Messenger that matches every message class */
+    public const string ROUTING_WILDCARD = '*';
 
     /** @var string[] What a reader is told, by reason code (never the converter's output) */
     public const array FAILURE_REASONS = [
@@ -120,7 +132,11 @@ class DriveOfficeRenditionsService extends Service
         self::FAILURE_CONVERSION => 'The file could not be converted to a PDF preview.',
         self::FAILURE_UNAVAILABLE => 'The PDF preview is not available at the moment. Try again later.',
         self::FAILURE_NOT_STARTED_HERE => 'This file has no PDF preview yet, and none is created in this environment.',
+        self::FAILURE_NOT_ROUTED_TO_WORKER => 'This file has no PDF preview yet: PDF previews are not set up to be created in the background here.',
     ];
+
+    /** @var bool The routing problem was written to the issues log by this process (once per process) */
+    protected static bool $isRenditionRoutingProblemLogged = false;
 
     /** @var string[] Reason codes that say nothing about the file: retried after {@see TRANSIENT_FAILURE_RETRY_SECONDS} */
     public const array TRANSIENT_FAILURES = [self::FAILURE_UNAVAILABLE];
@@ -238,11 +254,70 @@ class DriveOfficeRenditionsService extends Service
     }
 
     /**
+     * Whether a request may start a conversion.
+     *
+     * @deprecated since 0.4.1, removed in 0.5.0: override {@see DriveBlobsService::isDerivedObjectWriteAllowed()}, the
+     * one switch for every derived object. Still asked by {@see requestRendition()}, so a host's same-path override of
+     * this method keeps deciding for the rendition; the default answers the switch.
+     */
+    public function isConversionStartAllowed(): bool
+    {
+        return $this->getDriveBlobsService()->isDerivedObjectWriteAllowed();
+    }
+
+    /**
+     * Whether {@see DriveOfficeRenditionMessage} goes to a worker when dispatched: it is routed (by its class, a parent
+     * class, an interface or `*`, as Messenger's senders locator matches) to at least one transport that a worker
+     * consumes, i.e. one that is not synchronous (`sync://`, `in-memory://`). Read from the compiled container's
+     * routing ({@see WorkerTransportsService}). False = Messenger would handle the message inside the dispatching
+     * process.
+     */
+    public function isRenditionMessageRoutedToWorker(): bool
+    {
+        $workerTransportsService = $this->getWorkerTransportsService();
+        $messageTypes = array_merge(
+            [DriveOfficeRenditionMessage::class],
+            array_values(class_parents(DriveOfficeRenditionMessage::class) ?: []),
+            array_values(class_implements(DriveOfficeRenditionMessage::class) ?: []),
+            [self::ROUTING_WILDCARD]
+        );
+        foreach ($messageTypes as $messageType) {
+            foreach ($workerTransportsService->getTransportNamesForMessageClass($messageType) as $transportName) {
+                if ($workerTransportsService->hasReceiver($transportName) && !$workerTransportsService->isSynchronousTransport($transportName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What is wrong with the host's setup for renditions, as a sentence for a check or a health report; null when
+     * nothing is: renditions are off, or the message is routed to a worker. A host check (installation check, health
+     * endpoint) shows it; the rendition route answers {@see FAILURE_NOT_ROUTED_TO_WORKER} while it is not null.
+     */
+    public function findRenditionRoutingProblem(): ?string
+    {
+        if (!$this->getSettings()->enabled || $this->isRenditionMessageRoutedToWorker()) {
+            return null;
+        }
+        return sprintf(
+            'CloudDrive.settings.officeRenditions.enabled is true, but %s is routed to no asynchronous transport (route it to "%s" and run a consumer for it): a web request would convert inside the request, so the rendition route answers FAILED (%s) and converts nothing.',
+            DriveOfficeRenditionMessage::class,
+            DriveOfficeRenditionHandler::TRANSPORT,
+            self::FAILURE_NOT_ROUTED_TO_WORKER
+        );
+    }
+
+    /**
      * Where the rendition of a file's version (the current one when none is given) stands for the current caller,
      * after the checks of every content read (the read right on the space, the trash rule, a released blob):
      * READY with a grant of the purpose RENDITION, FAILED with the reason, or PENDING — the first PENDING dispatches
      * the conversion ({@see DriveOfficeRenditionMessage}), every further one only reads the store. Where no conversion may
-     * be started ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}) it only answers a stored PDF.
+     * be started ({@see isConversionStartAllowed()}, by default {@see DriveBlobsService::isDerivedObjectWriteAllowed()})
+     * it only answers a stored PDF. A web request never converts: while the message is routed to no worker
+     * ({@see isRenditionMessageRoutedToWorker()}) it answers a stored state and otherwise FAILED
+     * ({@see FAILURE_NOT_ROUTED_TO_WORKER}), and the issues log gets one warning per process.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -257,7 +332,7 @@ class DriveOfficeRenditionsService extends Service
         if (!$this->isRenditionOffered($driveNode, (int)$driveBlob->sizeBytes, $driveBlob->contentType)) {
             throw new BadRequestException('This file has no PDF rendition.');
         }
-        if (!$this->getDriveBlobsService()->isDerivedObjectWriteAllowed()) {
+        if (!$this->isConversionStartAllowed()) {
             // read only: the stored PDF or nothing. No marker is read, written or removed, nothing is dispatched
             $renditionDelivery = $this->findRenditionDelivery($driveNode, $driveFileVersion, $driveBlob);
             return $renditionDelivery !== null
@@ -267,6 +342,11 @@ class DriveOfficeRenditionsService extends Service
         $storedRendition = $this->findStoredRendition($driveNode, $driveFileVersion, $driveBlob, true);
         if ($storedRendition !== null) {
             return $storedRendition;
+        }
+        if (!$this->isConversionInsideThisProcessAllowed() && !$this->isRenditionMessageRoutedToWorker()) {
+            // Messenger would convert inside this web request: no marker, no dispatch, no conversion
+            $this->logRenditionRoutingProblemOnce();
+            return DriveOfficeRendition::create(DriveOfficeRendition::STATE_FAILED, static::findFailureReason(self::FAILURE_NOT_ROUTED_TO_WORKER));
         }
         $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
         $pendingMarkerStorageKey = static::buildPendingMarkerStorageKey((string)$driveBlob->storageKey);
@@ -671,13 +751,43 @@ class DriveOfficeRenditionsService extends Service
 
     /**
      * Dispatches the conversion of one version's blob to the transport `drive_render` (a host that does not route the
-     * message converts inside this call).
+     * message converts inside this call; {@see requestRendition()} lets only a command-line process do that).
      *
      * @throws InternalErrorException
      */
     protected function dispatchRendition(DriveFileVersion $driveFileVersion): void
     {
         (new DriveOfficeRenditionMessage((int)$driveFileVersion->id))->dispatch();
+    }
+
+    /**
+     * Whether a conversion may run inside this process when the message is handled synchronously: on the command line
+     * (a console command, a worker), never inside a web request.
+     */
+    protected function isConversionInsideThisProcessAllowed(): bool
+    {
+        return in_array(PHP_SAPI, ['cli', 'phpdbg'], true);
+    }
+
+    /** One warning per process in the issues log while the rendition message is routed to no worker */
+    protected function logRenditionRoutingProblemOnce(): void
+    {
+        if (static::$isRenditionRoutingProblemLogged) {
+            return;
+        }
+        static::$isRenditionRoutingProblemLogged = true;
+        $this->logRenditionRoutingProblem((string)$this->findRenditionRoutingProblem());
+    }
+
+    protected function logRenditionRoutingProblem(string $renditionRoutingProblem): void
+    {
+        /** @var IssuesLogService $issuesLogService */
+        $issuesLogService = DDDService::instance()->getService(IssuesLogService::class);
+        $issuesLogService->logThrowable(
+            DriveOfficeRenditionFailedException::forReason(self::FAILURE_NOT_ROUTED_TO_WORKER, $renditionRoutingProblem),
+            LogLevel::WARNING,
+            ['messageClass' => DriveOfficeRenditionMessage::class, 'transport' => DriveOfficeRenditionHandler::TRANSPORT]
+        );
     }
 
     /** The failure marker of a blob: the reason code and when it failed (replaces an older one) */
@@ -730,6 +840,13 @@ class DriveOfficeRenditionsService extends Service
         /** @var DriveBlobsService $driveBlobsService */
         $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
         return $driveBlobsService;
+    }
+
+    protected function getWorkerTransportsService(): WorkerTransportsService
+    {
+        /** @var WorkerTransportsService $workerTransportsService */
+        $workerTransportsService = DDDService::instance()->getService(WorkerTransportsService::class);
+        return $workerTransportsService;
     }
 
     protected function getDriveNodesService(): DriveNodesService

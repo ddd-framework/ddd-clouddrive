@@ -10,8 +10,9 @@ use DDD\Domain\Base\Entities\MessageHandlers\AppMessage;
  * The conversion of one version's Office content to its PDF rendition in a worker
  * ({@see \DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService}, setting `CloudDrive.settings.officeRenditions`).
  * The host routes it to the transport `drive_render` and gives that transport a consumer whose image holds LibreOffice
- * and fonts; a message routed nowhere is handled inside the request that asked for the rendition (LibreOffice inside
- * a web request: never in production).
+ * and fonts. A web request dispatches it only while it is routed to a transport a worker consumes
+ * ({@see \DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService::isRenditionMessageRoutedToWorker()}); routed
+ * nowhere, only a console command handles it in-process.
  */
 class DriveOfficeRenditionMessage extends AppMessage
 {
