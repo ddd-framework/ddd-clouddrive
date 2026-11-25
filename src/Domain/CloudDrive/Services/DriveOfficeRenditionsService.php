@@ -109,7 +109,7 @@ class DriveOfficeRenditionsService extends Service
     public const string FAILURE_TIMEOUT = 'TIMEOUT';
     public const string FAILURE_CONVERSION = 'CONVERSION';
     public const string FAILURE_UNAVAILABLE = 'UNAVAILABLE';
-    /** Never stored: the answer where no conversion is started ({@see isConversionStartAllowed()}) */
+    /** Never stored: the answer where no conversion is started ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}) */
     public const string FAILURE_NOT_STARTED_HERE = 'NOT_STARTED_HERE';
 
     /** @var string[] What a reader is told, by reason code (never the converter's output) */
@@ -238,22 +238,11 @@ class DriveOfficeRenditionsService extends Service
     }
 
     /**
-     * Whether a request may start a conversion: write the pending marker next to the blob and dispatch the message.
-     * Default true. A host overrides it (same-path subclass) where a request must leave the store and the queue
-     * untouched, e.g. a workspace that reads another environment's data: then {@see requestRendition()} answers a
-     * stored PDF and otherwise FAILED ({@see FAILURE_NOT_STARTED_HERE}), and writes nothing.
-     */
-    public function isConversionStartAllowed(): bool
-    {
-        return true;
-    }
-
-    /**
      * Where the rendition of a file's version (the current one when none is given) stands for the current caller,
      * after the checks of every content read (the read right on the space, the trash rule, a released blob):
      * READY with a grant of the purpose RENDITION, FAILED with the reason, or PENDING — the first PENDING dispatches
      * the conversion ({@see DriveOfficeRenditionMessage}), every further one only reads the store. Where no conversion may
-     * be started ({@see isConversionStartAllowed()}) it only answers a stored PDF.
+     * be started ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}) it only answers a stored PDF.
      *
      * @throws NotFoundException
      * @throws ForbiddenException
@@ -268,7 +257,7 @@ class DriveOfficeRenditionsService extends Service
         if (!$this->isRenditionOffered($driveNode, (int)$driveBlob->sizeBytes, $driveBlob->contentType)) {
             throw new BadRequestException('This file has no PDF rendition.');
         }
-        if (!$this->isConversionStartAllowed()) {
+        if (!$this->getDriveBlobsService()->isDerivedObjectWriteAllowed()) {
             // read only: the stored PDF or nothing. No marker is read, written or removed, nothing is dispatched
             $renditionDelivery = $this->findRenditionDelivery($driveNode, $driveFileVersion, $driveBlob);
             return $renditionDelivery !== null

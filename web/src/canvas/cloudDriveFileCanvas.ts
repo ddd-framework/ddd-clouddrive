@@ -16,17 +16,28 @@ export const CLOUD_DRIVE_STORE_NAME = 'clouddrive';
  * `@mgamadeus/ddd-admin-ui/files` previews (a picture, a PDF, Markdown, source code, text, CSV, video, sound). A
  * folder, a file without a preview (an office file the server neither renders nor pictures, an archive) and a
  * reference of another shape answer `null`: they keep the tab, the PDF twin and the download. An office file the
- * server renders as a PDF (`hasPdfRendition`) opens.
+ * server renders as a PDF (`hasPdfRendition`) opens, and an SVG the server shows as its sanitised picture
+ * (`hasSanitizedImage`).
  */
 export const cloudDriveFileCanvasReferenceOf = (
-  card: Pick<DriveFileCard, 'reference' | 'name' | 'isFolder' | 'contentType' | 'thumbnailUrl'> & { hasPdfRendition?: boolean | null }
+  card: Pick<DriveFileCard, 'reference' | 'name' | 'isFolder' | 'contentType' | 'thumbnailUrl'> & {
+    hasPdfRendition?: boolean | null;
+    hasSanitizedImage?: boolean | null;
+  }
 ): string | null => {
   const reference = card.reference.trim();
   if (card.isFolder || nodeIdOfDriveReference(reference) === null) return null;
   const extension = extensionOf(card.name ?? '');
   const familyOfExtension = fileFamilyOfExtension(extension);
   const family = familyOfExtension === 'OTHER' ? (fileFamilyOfContentType(card.contentType) ?? 'OTHER') : familyOfExtension;
-  return filePreviewKind({ family, extension, thumbnailUrl: card.thumbnailUrl ?? null, hasPdfRendition: card.hasPdfRendition === true }) === 'none' ? null : reference;
+  const kind = filePreviewKind({
+    family,
+    extension,
+    thumbnailUrl: card.thumbnailUrl ?? null,
+    hasPdfRendition: card.hasPdfRendition === true,
+    hasSanitizedImage: card.hasSanitizedImage === true,
+  });
+  return kind === 'none' ? null : reference;
 };
 
 /** The canvas that shows one drive folder beside the chat (a small file manager). Append-only: stored pointers name it. */

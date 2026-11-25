@@ -5,10 +5,12 @@ import {
   buildCloudDriveFileActions,
   type CloudDriveFileActionTriggers,
   type DriveNodeFact,
+  drivePurposeOf,
   driveTextContentTypeOf,
+  isSanitizedImageGrant,
   nextDriveCopyName,
 } from './driveFileActions.ts';
-import type { DriveNodeListItem, DriveNodeResponse, DriveRenditionResponse, DriveUploadCompleteArg } from '../types.ts';
+import type { DriveContentGrant, DriveNodeListItem, DriveNodeResponse, DriveRenditionResponse, DriveUploadCompleteArg } from '../types.ts';
 
 const item = (overrides: Partial<DriveNodeListItem> = {}): DriveNodeListItem => ({
   id: 812,
@@ -144,6 +146,58 @@ describe('the PDF rendition of a document', () => {
     assert.deepEqual(await pending.getDownload(812, { disposition: 'inline', variant: 'PDF_RENDITION' }), { url: '', fileName: '', state: 'pending', message: null });
     const failed = buildCloudDriveFileActions(fakeTriggers(() => response(), { state: 'FAILED', reason: 'the document is encrypted' }).triggers, { spaceId: 3, rootNodeId: 1, canManage: false, nodeFacts: nodeFacts() });
     assert.deepEqual(await failed.getDownload(812, { disposition: 'inline', variant: 'PDF_RENDITION', versionId: 5 }), { url: '', fileName: '', state: 'failed', message: 'the document is encrypted' });
+  });
+});
+
+describe('the sanitised picture of an SVG', () => {
+  const actionsOf = (grant: DriveContentGrant, contentRequests: unknown[] = []) => {
+    const { triggers } = fakeTriggers(() => response());
+    (triggers as unknown as { requestContent: (arg: unknown) => unknown }).requestContent = (arg: unknown) => {
+      contentRequests.push(arg);
+      return answer({ grant });
+    };
+    return buildCloudDriveFileActions(triggers, { spaceId: 3, rootNodeId: 1, canManage: false, nodeFacts: nodeFacts() });
+  };
+  const sanitisedGrant: DriveContentGrant = { purpose: 'INLINE', url: '/api/public/drive/content/s', fileName: 'logo.svg', contentType: 'image/svg+xml', isInline: true };
+
+  it('asks for the inline variant and answers the URL of the sanitised copy', async () => {
+    const contentRequests: unknown[] = [];
+    assert.equal(drivePurposeOf({ disposition: 'inline', variant: 'SANITIZED_IMAGE' }), 'INLINE');
+    assert.deepEqual(await actionsOf(sanitisedGrant, contentRequests).getDownload(812, { disposition: 'inline', variant: 'SANITIZED_IMAGE', versionId: 5 }), {
+      url: '/api/public/drive/content/s',
+      fileName: 'logo.svg',
+      expiresAt: null,
+      state: 'ready',
+    });
+    assert.deepEqual(contentRequests, [{ driveNodeId: 812, purpose: 'INLINE', versionId: 5 }]);
+  });
+
+  it('hands over no URL when the answer is not the sanitised copy', async () => {
+    const noPicture = { url: '', fileName: 'logo.svg', state: 'failed', message: null };
+    // no copy could be made: the server answers the uploaded bytes as an attachment
+    const attachment = { ...sanitisedGrant, contentType: 'application/octet-stream', isInline: false };
+    assert.deepEqual(await actionsOf(attachment).getDownload(812, { disposition: 'inline', variant: 'SANITIZED_IMAGE' }), noPicture);
+    // an attachment stays one whatever type it names
+    assert.deepEqual(await actionsOf({ ...sanitisedGrant, isInline: false }).getDownload(812, { disposition: 'inline', variant: 'SANITIZED_IMAGE' }), noPicture);
+    // a server that does not say `isInline` (before 0.2.0) is not trusted with a picture
+    const silent: DriveContentGrant = { purpose: 'INLINE', url: '/api/public/drive/content/s', fileName: 'logo.svg', contentType: 'image/svg+xml' };
+    assert.deepEqual(await actionsOf(silent).getDownload(812, { disposition: 'inline', variant: 'SANITIZED_IMAGE' }), noPicture);
+    // another inline type is not the sanitised copy of an SVG
+    assert.deepEqual(await actionsOf({ ...sanitisedGrant, contentType: 'text/plain; charset=utf-8' }).getDownload(812, { disposition: 'inline', variant: 'SANITIZED_IMAGE' }), noPicture);
+  });
+
+  it('reads the grant strictly', () => {
+    assert.equal(isSanitizedImageGrant({ isInline: true, contentType: 'image/svg+xml' }), true);
+    assert.equal(isSanitizedImageGrant({ isInline: true, contentType: 'Image/SVG+XML; charset=utf-8' }), true);
+    assert.equal(isSanitizedImageGrant({ isInline: true, contentType: 'image/svg+xml-evil' }), false);
+    assert.equal(isSanitizedImageGrant({ isInline: true, contentType: null }), false);
+    assert.equal(isSanitizedImageGrant({ isInline: false, contentType: 'image/svg+xml' }), false);
+    assert.equal(isSanitizedImageGrant({ contentType: 'image/svg+xml' }), false);
+  });
+
+  it('leaves every other preview as it was', async () => {
+    const png: DriveContentGrant = { purpose: 'INLINE', url: '/api/public/drive/content/p', fileName: 'photo.png', contentType: 'image/png', isInline: true };
+    assert.deepEqual(await actionsOf(png).getDownload(812, { disposition: 'inline', variant: 'PREVIEW' }), { url: '/api/public/drive/content/p', fileName: 'photo.png', expiresAt: null });
   });
 });
 

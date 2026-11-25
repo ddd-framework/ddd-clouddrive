@@ -49,7 +49,11 @@ folders and versioned files whose bytes live in object storage, working copies f
   inline only for JPEG, PNG, GIF, WebP and PDF in their own type and for plain texts (Markdown, CSV, JSON, …) as
   `text/plain; charset=utf-8`; everything else as an attachment (HTML, SVG, XML, JavaScript as
   `application/octet-stream`), always with `nosniff` and the sandbox CSP (not on a PDF); an SVG is shown only as its
-  sanitised copy. A host that wants inline PDFs and texts off the application's origin mounts the content route on
+  sanitised copy: the INLINE grant of an SVG serves the copy the host's `DriveSvgSanitizer` made (once per blob, at
+  the first such grant, kept next to the blob) as `image/svg+xml`, for an `<img>`; without a sanitiser, for an SVG it
+  refuses or one above 2 MB the grant is an attachment (`isInline` false). `hasSanitizedImage` on a list item says
+  the picture is offered, on a file card that its `inlineUrl` is the copy. A host that wants inline PDFs and texts
+  off the application's origin mounts the content route on
   another host and sets `transfer.contentUrlPrefix` to its absolute URL. `resolveInlineContentType()` is the one rule (a host narrows it in a
   same-path subclass). The stored type comes from the bytes at the ingest of every write path (upload, working-copy
   commit, agent write, copies; `DriveBlobsService::detectContentTypeOfFile()` / `detectContentTypeOfBytes()`): a PDF
@@ -274,10 +278,13 @@ answered for twice as long is dispatched again), `maxPages` (300), `binary` (`so
 `addressSpaceBytes` (4 GiB, `null` = no cap). A failed conversion is kept for 24 hours (10 minutes when the converter
 could not start), then the next request tries again.
 
-**A host that must not start conversions from a request** (a workspace that reads another environment's store and
-queue) overrides `DriveOfficeRenditionsService::isConversionStartAllowed()` in a same-path subclass. Where it answers
-false, the route serves a stored PDF and otherwise `FAILED` ("This file has no PDF preview yet, and none is created in
-this environment."): no marker is read, written or removed and nothing is dispatched.
+**A host whose reads must write nothing** (a workspace that reads another environment's store and queue) overrides
+`DriveBlobsService::isDerivedObjectWriteAllowed()` in a same-path subclass. It is the one switch for every object the
+drive derives from a blob while a file is only read. Where it answers false, the rendition route serves a stored PDF
+and otherwise `FAILED` ("This file has no PDF preview yet, and none is created in this environment."): no marker is
+read, written or removed and nothing is dispatched. An SVG is served as its sanitised copy only when the copy
+exists; none is made, and the SVG stays an attachment. Uploads, versions and purges are writes of their own and do
+not ask the switch.
 
 ## Frontend
 

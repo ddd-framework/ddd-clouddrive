@@ -73,6 +73,7 @@ const toAgentCard = (card: DriveFileCard): DriveCardOfAgents => ({
   inlineUrl: card.inlineUrl ?? null,
   downloadUrl: card.downloadUrl ?? null,
   ...(card.hasPdfRendition === true ? { hasPdfRendition: true } : {}),
+  ...(card.hasSanitizedImage === true ? { hasSanitizedImage: true } : {}),
 });
 
 /** How long before `urlsExpireAt` a URL counts as expired: the click, the redirect and the bucket's clock. */

@@ -28,9 +28,6 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
 
     public bool $isDispatchFailing = false;
 
-    /** @var bool false = a host that starts no conversion from a request ({@see isConversionStartAllowed()}) */
-    public bool $isConversionStartAllowedForTest = true;
-
     /** @var bool A host that routes the message nowhere: the dispatch converts at once */
     public bool $isRenderedOnDispatch = false;
 
@@ -66,11 +63,6 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
     public function getSettings(): DriveOfficeRenditionSettings
     {
         return $this->testSettings;
-    }
-
-    public function isConversionStartAllowed(): bool
-    {
-        return $this->isConversionStartAllowedForTest;
     }
 
     protected function getCurrentTimestamp(): int

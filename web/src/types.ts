@@ -102,6 +102,8 @@ export interface DriveContentGrant {
   fileName: string;
   sizeBytes?: number | null;
   contentType?: string | null;
+  /** The URL serves the inline variant (a preview); false = an attachment (e.g. an SVG without a sanitised copy). */
+  isInline?: boolean;
 }
 
 export interface DriveFileCard {
@@ -124,6 +126,8 @@ export interface DriveFileCard {
   adminLink?: string | null;
   /** The server renders this document as a PDF for the preview (ddd-clouddrive ≥ 0.3.5). */
   hasPdfRendition?: boolean;
+  /** `inlineUrl` serves the sanitised copy of this SVG as `image/svg+xml`, for an `<img>` only (ddd-clouddrive ≥ 0.4.1). */
+  hasSanitizedImage?: boolean;
 }
 
 export interface DriveSpacesResponse {
@@ -281,6 +285,11 @@ export interface DriveNodeListItem {
   thumbnailUrl?: string | null;
   /** The server renders this document as a PDF for the preview (`GET /nodes/{id}/rendition`; ddd-clouddrive ≥ 0.3.5). */
   hasPdfRendition?: boolean;
+  /**
+   * The server offers this SVG as a picture from its sanitised copy: an INLINE grant answers it as `image/svg+xml`, or
+   * an attachment (`isInline` false) when no copy could be made (ddd-clouddrive ≥ 0.4.1).
+   */
+  hasSanitizedImage?: boolean;
   createdByAccountId?: number | null;
   createdByName?: string | null;
   /** ddd-clouddrive ≥ rc.20: the account the creator acted for (impersonation); null otherwise. */

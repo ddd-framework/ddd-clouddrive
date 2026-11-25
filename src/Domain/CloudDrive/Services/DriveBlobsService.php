@@ -946,6 +946,19 @@ class DriveBlobsService extends EntitiesService
     }
 
     /**
+     * Whether this environment may write objects that are derived from a blob and stored next to it while a file is
+     * only read: the sanitised copy of an SVG ({@see DriveContentGrantsService}) and the PDF rendition of an Office
+     * file with its markers and its conversion message ({@see DriveOfficeRenditionsService}). Default true. A host
+     * overrides it (same-path subclass) where a read must leave the store and the queue untouched, e.g. a workspace
+     * that reads another environment's data: there a derived object that exists is served, and one that does not is
+     * not made (the file has no preview). Uploads, versions and purges are writes of their own and do not ask here.
+     */
+    public function isDerivedObjectWriteAllowed(): bool
+    {
+        return true;
+    }
+
+    /**
      * Deletes what was derived from a blob and stored next to it: the sanitised copy of an SVG, and the PDF rendition
      * of an Office file with its markers ({@see DriveOfficeRenditionsService}). Asked only for the types that can
      * have them, so the purge of any other blob costs no extra request.

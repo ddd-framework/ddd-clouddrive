@@ -16,6 +16,9 @@ class TransferTestDriveBlobsService extends DriveBlobsService
     /** @var DriveBlob[] Blobs by id */
     public array $blobsById = [];
 
+    /** @var bool false = a host whose reads write no derived object ({@see isDerivedObjectWriteAllowed()}) */
+    public bool $isDerivedObjectWriteAllowedForTest = true;
+
     public function __construct(public ObjectStorage $testObjectStorage, public DriveSpacesService $testDriveSpacesService)
     {
     }
@@ -23,6 +26,11 @@ class TransferTestDriveBlobsService extends DriveBlobsService
     public function find(string|int|null $entityId, bool $useEntityRegistrCache = true): ?Entity
     {
         return $this->blobsById[(int)$entityId] ?? null;
+    }
+
+    public function isDerivedObjectWriteAllowed(): bool
+    {
+        return $this->isDerivedObjectWriteAllowedForTest;
     }
 
     public function getObjectStorage(): ObjectStorage

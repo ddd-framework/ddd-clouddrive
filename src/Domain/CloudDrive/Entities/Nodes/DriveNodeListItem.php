@@ -79,6 +79,13 @@ class DriveNodeListItem extends ValueObject
     /** @var bool The server offers a PDF rendition of this released Office file (`GET …/nodes/{id}/rendition`) */
     public bool $hasPdfRendition = false;
 
+    /**
+     * @var bool The server offers this released SVG as a picture from its sanitised copy: an INLINE grant
+     * (`GET …/nodes/{id}/content?purpose=INLINE`) answers the copy as `image/svg+xml` for an `<img>`, or an attachment
+     * (`isInline` false) when no copy could be made
+     */
+    public bool $hasSanitizedImage = false;
+
     public ?int $createdByAccountId = null;
 
     /** @var string|null The creator's display name (the application's names; null when it gives none) */

@@ -763,6 +763,9 @@ class DriveNodesService extends EntitiesService
             $driveNodeListItem->hasPdfRendition = $shownBlob !== null && $shownBlob->isReadableByPeople()
                 && $driveOfficeRenditionsService->isRenditionOffered($driveNode, (int)$shownBlob->sizeBytes, $shownBlob->contentType)
                 && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_RENDITION, $audience);
+            $driveNodeListItem->hasSanitizedImage = $shownBlob !== null && $shownBlob->isReadableByPeople()
+                && $driveContentGrantsService->isSanitizedImageOffered($shownBlob->contentType, (int)$shownBlob->sizeBytes)
+                && $driveContentGrantsService->isVariantAllowed($driveNode, DriveContentGrant::PURPOSE_INLINE, $audience);
             $driveNodeListItems->add($driveNodeListItem);
         }
         return $driveNodeListItems;

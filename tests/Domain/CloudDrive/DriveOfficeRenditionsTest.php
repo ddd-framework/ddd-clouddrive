@@ -16,6 +16,7 @@ use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Exceptions\DriveOfficeRenditionFailedException;
 use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionHandler;
 use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage;
+use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
 use DDD\Infrastructure\Base\DateTime\DateTime;
 use DDD\Infrastructure\Exceptions\BadRequestException;
@@ -364,13 +365,13 @@ class DriveOfficeRenditionsTest extends DriveOfficeRenditionTestCase
         self::assertInstanceOf(DriveContentGrant::class, $driveOfficeRendition->grant);
     }
 
-    public function testAHostThatStartsNoConversionAnswersOnlyAStoredPdfAndWritesNothing(): void
+    public function testAHostThatWritesNoDerivedObjectAnswersOnlyAStoredPdfAndWritesNothing(): void
     {
         $driveNode = $this->storeFile('Report.docx', $this->buildDocx());
         $pendingMarkerStorageKey = DriveOfficeRenditionsService::buildPendingMarkerStorageKey(self::BLOB_STORAGE_KEY);
         $failureMarkerStorageKey = DriveOfficeRenditionsService::buildFailureMarkerStorageKey(self::BLOB_STORAGE_KEY);
-        self::assertTrue((new DriveOfficeRenditionsService())->isConversionStartAllowed(), 'the package starts conversions unless a host says no');
-        $this->driveOfficeRenditionsService->isConversionStartAllowedForTest = false;
+        self::assertTrue((new DriveBlobsService())->isDerivedObjectWriteAllowed(), 'the package writes derived objects unless a host says no');
+        $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = false;
 
         // no PDF yet: FAILED with its own reason, no marker, no dispatch, no conversion
         $driveOfficeRendition = $this->driveOfficeRenditionsService->requestRendition($driveNode);
@@ -396,10 +397,10 @@ class DriveOfficeRenditionsTest extends DriveOfficeRenditionTestCase
         // a PDF the owning environment made is served
         $this->objectStorage->deleteObject($pendingMarkerStorageKey);
         $this->objectStorage->deleteObject($failureMarkerStorageKey);
-        $this->driveOfficeRenditionsService->isConversionStartAllowedForTest = true;
+        $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = true;
         $this->driveOfficeRenditionsService->requestRendition($driveNode);
         $this->driveOfficeRenditionsService->renderRendition($this->driveVersionsService->versionsById[70]);
-        $this->driveOfficeRenditionsService->isConversionStartAllowedForTest = false;
+        $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = false;
         $driveOfficeRendition = $this->driveOfficeRenditionsService->requestRendition($driveNode);
         self::assertSame(DriveOfficeRendition::STATE_READY, $driveOfficeRendition->state);
         self::assertInstanceOf(DriveContentGrant::class, $driveOfficeRendition->grant);

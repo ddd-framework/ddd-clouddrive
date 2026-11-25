@@ -113,7 +113,9 @@ and the PDF of the grant on `READY`.
 A canvas pointer carries the reference only (`cloudDriveFile:reference:drive/812`); the node, its versions and its
 content are read through the drive routes under the viewer's rights, every byte through the content route — never an
 object-store URL. Markdown is rendered by the host's `renderMarkdown` (pass the untrusted mode), source is coloured
-text, an SVG is drawn as an image; nothing a file contains is executed. The canvases stay through the conversation
+text, an SVG is drawn in an `<img>` from the copy the server sanitised (`hasSanitizedImage`; the adapter hands over
+the URL only of an inline `image/svg+xml` grant, and a file without such a copy has no preview); nothing a file
+contains is executed. The canvases stay through the conversation
 (`pinned`) and come back after a reload. The canvas bodies run inside the host's Redux provider (the api's hooks) and
 inside `AdminUiProvider` (links, texts). Without the call nothing changes.
 

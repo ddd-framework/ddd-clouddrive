@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.1
+
+Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.1 for the picture of an SVG. No table change.
+
+**Hook renamed.** A host that overrides `DriveOfficeRenditionsService::isConversionStartAllowed()` (0.4.0) moves the
+override to `DriveBlobsService::isDerivedObjectWriteAllowed()` (a same-path subclass of the blobs service, with its
+service alias). The old method is gone; an override of it is no longer asked.
+
+- `DriveBlobsService::isDerivedObjectWriteAllowed()` (default true) is the host's one switch for an environment whose
+  reads must leave store and queue untouched (a workspace on another environment's data). It covers every object the
+  drive derives from a blob while a file is only read: there the rendition route only serves a stored PDF (`FAILED`
+  otherwise, nothing dispatched, no marker), and an SVG is served as its sanitised copy only when the copy exists
+  (none is made; the SVG stays an attachment).
+- **An SVG as a picture in the viewer:** `hasSanitizedImage` on `DriveNodeListItem` (the server offers the picture: a
+  sanitiser is registered, the released SVG is within 2 MB) and on `DriveFileCard` (its `inlineUrl` is the sanitised
+  copy); `DriveContentGrantsService::isSanitizedImageOffered()`. The content route is unchanged: an INLINE grant of an
+  SVG serves the sanitised copy as `image/svg+xml`, inline, `nosniff`, with the sandbox CSP, and a download the
+  uploaded file as an opaque attachment. The copy is made at the first such grant of a blob and kept next to it, so
+  files uploaded before get their picture too. Web: the adapter answers `getDownload` variant `SANITIZED_IMAGE` with
+  the grant's URL only when the grant is inline and `image/svg+xml` (`isSanitizedImageGrant`), otherwise `failed` —
+  the viewer of `@mgamadeus/ddd-admin-ui` ≥ 0.8.1 then draws it in an `<img>` with zoom, in the drawer, the file
+  canvas and the folder canvas; a `DriveFiles` card of such a file opens the file canvas. `DriveContentGrant.isInline`
+  in the web types.
+
 ## 0.4.0
 
 Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.0 and, for the canvases, `mgamadeus/ddd-agents` / `@mgamadeus/ddd-agents` ≥ 0.3.14.

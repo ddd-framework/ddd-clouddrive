@@ -6,7 +6,7 @@ import type { FileAreaKey, FileItemId, FileView } from '@mgamadeus/ddd-admin-ui/
 import type { UploadProgressCallbacks } from '@mgamadeus/ddd-admin-ui/files';
 import type { CloudDriveApi } from '../api.ts';
 import { driveFileViewOf, driveFolderIdOf, emptyDriveTrashFully } from './driveFileMapping.ts';
-import type { DriveContentPurpose, DriveNodeListItem, DriveNodeResponse } from '../types.ts';
+import type { DriveContentGrant, DriveContentPurpose, DriveNodeListItem, DriveNodeResponse } from '../types.ts';
 import { driveUploadIdempotencyKeyOf, sendDriveUpload, type DriveUploadSender } from './upload.ts';
 
 type TriggerOf<THook> = THook extends () => readonly [infer TTrigger, unknown] ? TTrigger : never;
@@ -96,15 +96,26 @@ export const rememberDriveNodes = (nodeFacts: Map<number, DriveNodeFact>, items:
  */
 /**
  * The content purpose of a download request: a list picture is a `THUMBNAIL` (never recorded), a preview `INLINE`
- * (recorded as viewed; the server serves non-raster types as attachment anyway), an original `DOWNLOAD` (recorded as
- * downloaded).
+ * (recorded as viewed; the server serves non-raster types as attachment anyway — an SVG as its sanitised copy, which
+ * is what `SANITIZED_IMAGE` asks for), an original `DOWNLOAD` (recorded as downloaded).
  */
 export const drivePurposeOf = (options: FileDownloadOptions): DriveContentPurpose =>
   options.variant === 'THUMBNAIL'
     ? 'THUMBNAIL'
-    : options.variant === 'PREVIEW' || (options.variant === undefined && options.disposition === 'inline')
+    : options.variant === 'PREVIEW' || options.variant === 'SANITIZED_IMAGE' || (options.variant === undefined && options.disposition === 'inline')
       ? 'INLINE'
       : 'DOWNLOAD';
+
+/** The content type of an SVG, as the server names its sanitised copy. */
+const SVG_CONTENT_TYPE = 'image/svg+xml';
+
+/**
+ * Whether a grant serves the sanitised copy of an SVG as a picture: the server made (or found) the copy and serves it
+ * inline as `image/svg+xml`. Any other answer for an SVG — an attachment of the uploaded bytes, another type, a
+ * server that does not say `isInline` — is no picture: the viewer shows no preview.
+ */
+export const isSanitizedImageGrant = (grant: Pick<DriveContentGrant, 'isInline' | 'contentType'>): boolean =>
+  grant.isInline === true && (grant.contentType ?? '').split(';')[0].trim().toLowerCase() === SVG_CONTENT_TYPE;
 
 /** The result of a mutation trigger; `signal` aborts its request. */
 const unwrapAbortable = <TResult>(request: { unwrap: () => Promise<TResult>; abort?: () => void }, signal?: AbortSignal): Promise<TResult> => {
@@ -191,6 +202,12 @@ export const buildCloudDriveFileActions = (triggers: CloudDriveFileActionTrigger
         purpose: drivePurposeOf(options),
         versionId: options.versionId === undefined ? null : Number(options.versionId),
       }).unwrap();
+      if (options.variant === 'SANITIZED_IMAGE') {
+        // only the server's sanitised copy is a picture; the uploaded bytes (an attachment answer) never reach an <img>
+        return isSanitizedImageGrant(grant)
+          ? { url: grant.url, fileName: grant.fileName, expiresAt: grant.expiresAt ?? null, state: 'ready' }
+          : { url: '', fileName: grant.fileName, state: 'failed', message: null };
+      }
       return { url: grant.url, fileName: grant.fileName, expiresAt: grant.expiresAt ?? null };
     },
     patchFile: async (fileId, patch) => {

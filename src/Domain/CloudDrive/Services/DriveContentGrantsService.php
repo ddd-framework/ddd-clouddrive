@@ -285,19 +285,36 @@ class DriveContentGrantsService extends Service
     }
 
     /**
+     * Whether the server offers a file as a picture from its sanitised copy (what `hasSanitizedImage` of a list item
+     * and a file card says): an SVG within {@see DriveSvgSanitizersService::MAX_SVG_BYTES} on a host with a sanitiser
+     * ({@see DriveSvgSanitizer}). Whether the copy can be made is known only when it is asked for: the INLINE grant
+     * of an SVG the sanitiser refuses is an attachment (`isInline` false).
+     */
+    public function isSanitizedImageOffered(?string $contentType, ?int $sizeBytes): bool
+    {
+        return UntrustedContentHeaders::normalizeContentType($contentType) === self::SVG_CONTENT_TYPE
+            && $sizeBytes !== null && $sizeBytes <= DriveSvgSanitizersService::MAX_SVG_BYTES
+            && $this->getDriveSvgSanitizersService()->hasSvgSanitizer();
+    }
+
+    /**
      * The key of an SVG's sanitised copy ({@see DriveSvgSanitizer}), made once per blob and kept next to it; null
-     * without a sanitiser or when the SVG cannot be made safe (it stays an attachment).
+     * without a sanitiser or when the SVG cannot be made safe (it stays an attachment). Where derived objects may
+     * not be written ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}) only a copy that exists is answered.
      */
     protected function ensureSanitizedSvgCopy(DriveBlob $driveBlob): ?string
     {
-        /** @var DriveSvgSanitizersService $driveSvgSanitizersService */
-        $driveSvgSanitizersService = DDDService::instance()->getService(DriveSvgSanitizersService::class);
+        $driveSvgSanitizersService = $this->getDriveSvgSanitizersService();
         if (!$driveSvgSanitizersService->hasSvgSanitizer() || (int)$driveBlob->sizeBytes > DriveSvgSanitizersService::MAX_SVG_BYTES) {
             return null;
         }
-        $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
+        $driveBlobsService = $this->getDriveBlobsService();
+        $objectStorage = $driveBlobsService->getObjectStorage();
         $sanitizedStorageKey = DriveBlobsService::buildSanitizedSvgStorageKey((string)$driveBlob->storageKey);
         if (!$objectStorage->objectExists($sanitizedStorageKey)) {
+            if (!$driveBlobsService->isDerivedObjectWriteAllowed()) {
+                return null;
+            }
             $svgBytes = $objectStorage->getObjectContent((string)$driveBlob->storageKey);
             $sanitizedSvg = $svgBytes !== null ? $driveSvgSanitizersService->sanitizeSvg($svgBytes) : null;
             if ($sanitizedSvg === null) {
@@ -375,6 +392,9 @@ class DriveContentGrantsService extends Service
                         $driveFileCard->thumbnailUrl = $inlineGrant->url;
                     }
                     $driveFileCard->hasPdfRendition = $this->getDriveOfficeRenditionsService()->isRenditionOffered($driveNode, $downloadGrant->sizeBytes, $driveFileCard->contentType);
+                    // the inline grant of an SVG is its sanitised copy, or an attachment when none could be made
+                    $driveFileCard->hasSanitizedImage = $inlineGrant->isInline
+                        && UntrustedContentHeaders::normalizeContentType($inlineGrant->contentType) === self::SVG_CONTENT_TYPE;
                 } catch (ForbiddenException|NotFoundException $grantRefusal) {
                     $driveFileCard->state = str_contains($grantRefusal->getMessage(), 'blocked') ? 'blocked' : 'pending scan';
                 }
@@ -453,6 +473,13 @@ class DriveContentGrantsService extends Service
         /** @var DriveBlobsService $driveBlobsService */
         $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
         return $driveBlobsService;
+    }
+
+    protected function getDriveSvgSanitizersService(): DriveSvgSanitizersService
+    {
+        /** @var DriveSvgSanitizersService $driveSvgSanitizersService */
+        $driveSvgSanitizersService = DDDService::instance()->getService(DriveSvgSanitizersService::class);
+        return $driveSvgSanitizersService;
     }
 
     protected function getDriveOfficeRenditionsService(): DriveOfficeRenditionsService

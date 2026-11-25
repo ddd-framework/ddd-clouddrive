@@ -36,6 +36,14 @@ describe('the file canvas of the cloud drive', () => {
     assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'letter.docx', hasPdfRendition: true }), 'drive/812');
     assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'letter.docx', hasPdfRendition: false }), null);
   });
+
+  it('opens an SVG only when the server shows it as its sanitised picture', () => {
+    assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'logo.svg', hasSanitizedImage: true }), 'drive/812');
+    assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'logo', contentType: 'image/svg+xml', hasSanitizedImage: true }), 'drive/812');
+    assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'logo.svg', hasSanitizedImage: false }), null);
+    assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'logo.svg' }), null);
+    assert.equal(cloudDriveFileCanvasReferenceOf({ reference: 'drive/812', name: 'logo.svg', thumbnailUrl: '/api/public/drive/content/t' }), null);
+  });
 });
 
 describe('the folder canvas of the cloud drive', () => {

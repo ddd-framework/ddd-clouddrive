@@ -59,6 +59,15 @@ describe('drive payloads as file manager views', () => {
     assert.equal(driveFileViewOf(file({ parentNodeId: 12 }), ROOT).folderId, 12);
   });
 
+  it('carries the facts of what the server derives: the PDF rendition and the sanitised picture of an SVG', () => {
+    const svg = driveFileViewOf(file({ name: 'logo.svg', extension: 'svg', contentType: 'image/svg+xml', family: null, hasSanitizedImage: true }), ROOT);
+    assert.equal(svg.family, 'VECTOR');
+    assert.equal(svg.hasSanitizedImage, true);
+    assert.equal('hasSanitizedImage' in driveFileViewOf(file({ name: 'logo.svg', hasSanitizedImage: false }), ROOT), false);
+    assert.equal('hasSanitizedImage' in driveFileViewOf(file({ name: 'logo.svg' }), ROOT), false, 'an older server: no picture');
+    assert.equal(driveFileViewOf(file({ name: 'letter.docx', hasPdfRendition: true }), ROOT).hasPdfRendition, true);
+  });
+
   it('derives the family and extension when the server sends none', () => {
     const view = driveFileViewOf(file({ family: null, extension: '', name: 'photo.PNG', contentType: 'image/png' }), ROOT);
     assert.equal(view.extension, 'png');
