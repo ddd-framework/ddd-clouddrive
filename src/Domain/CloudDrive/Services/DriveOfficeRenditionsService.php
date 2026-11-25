@@ -10,6 +10,7 @@ use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveFileFamily;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Renditions\DriveOfficeRendition;
+use DDD\Domain\CloudDrive\Entities\Renditions\DriveOfficeRenditionMarker;
 use DDD\Domain\CloudDrive\Entities\Renditions\DriveOfficeRenditionSettings;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Exceptions\DriveOfficeRenditionFailedException;
@@ -280,8 +281,8 @@ class DriveOfficeRenditionsService extends Service
         }
         $objectStorage = $this->getDriveBlobsService()->getObjectStorage();
         $pendingMarkerStorageKey = static::buildPendingMarkerStorageKey((string)$driveBlob->storageKey);
-        $pendingMarker = json_encode(['requestedAt' => $this->getCurrentTimestamp()], JSON_THROW_ON_ERROR);
-        if (!$objectStorage->putObjectIfAbsent($pendingMarkerStorageKey, $pendingMarker, self::MARKER_CONTENT_TYPE)) {
+        $pendingMarker = DriveOfficeRenditionMarker::createPending($this->getCurrentTimestamp());
+        if (!$objectStorage->putObjectIfAbsent($pendingMarkerStorageKey, $pendingMarker->toStoredJson(), self::MARKER_CONTENT_TYPE)) {
             // another request dispatched it a moment ago
             return DriveOfficeRendition::create(DriveOfficeRendition::STATE_PENDING);
         }
@@ -322,7 +323,7 @@ class DriveOfficeRenditionsService extends Service
             $pendingMarker = $this->readMarker($objectStorage, $pendingMarkerStorageKey);
             if ($pendingMarker !== null) {
                 $lostAfterSeconds = 2 * $this->getSettings()->timeoutSeconds + self::LOST_PENDING_GRACE_SECONDS;
-                if ($currentTimestamp - (int)($pendingMarker['requestedAt'] ?? 0) <= $lostAfterSeconds) {
+                if ($currentTimestamp - (int)$pendingMarker->requestedAt <= $lostAfterSeconds) {
                     return DriveOfficeRendition::create(DriveOfficeRendition::STATE_PENDING);
                 }
                 // the worker never answered (a lost message, a killed worker): dispatch again
@@ -334,9 +335,9 @@ class DriveOfficeRenditionsService extends Service
         if ($failureMarker === null) {
             return null;
         }
-        $reasonCode = (string)($failureMarker['reasonCode'] ?? '');
+        $reasonCode = (string)$failureMarker->reasonCode;
         $retrySeconds = in_array($reasonCode, self::TRANSIENT_FAILURES, true) ? self::TRANSIENT_FAILURE_RETRY_SECONDS : self::FAILURE_RETRY_SECONDS;
-        if ($currentTimestamp - (int)($failureMarker['failedAt'] ?? 0) > $retrySeconds) {
+        if ($currentTimestamp - (int)$failureMarker->failedAt > $retrySeconds) {
             $objectStorage->deleteObject($failureMarkerStorageKey);
             return null;
         }
@@ -695,23 +696,19 @@ class DriveOfficeRenditionsService extends Service
     {
         $objectStorage->putObject(
             static::buildFailureMarkerStorageKey($storageKey),
-            json_encode(['reasonCode' => $reasonCode, 'failedAt' => $this->getCurrentTimestamp()], JSON_THROW_ON_ERROR),
+            DriveOfficeRenditionMarker::createFailure($reasonCode, $this->getCurrentTimestamp())->toStoredJson(),
             self::MARKER_CONTENT_TYPE
         );
     }
 
     /**
-     * @return array<string, mixed>|null the marker's fields; null when there is no marker (an unreadable one reads as
-     *         empty: a pending marker without a time counts as lost, a failure without a time as past its retry)
+     * The marker stored under a key; null when there is none (an unreadable one reads as empty: a pending marker
+     * without a time counts as lost, a failure without a time as past its retry).
      */
-    protected function readMarker(ObjectStorage $objectStorage, string $markerStorageKey): ?array
+    protected function readMarker(ObjectStorage $objectStorage, string $markerStorageKey): ?DriveOfficeRenditionMarker
     {
         $markerContent = $objectStorage->getObjectContent($markerStorageKey);
-        if ($markerContent === null) {
-            return null;
-        }
-        $marker = json_decode($markerContent, true);
-        return is_array($marker) ? $marker : [];
+        return $markerContent === null ? null : DriveOfficeRenditionMarker::fromStoredJson($markerContent);
     }
 
     /** The detail of a failed conversion stays on the server: a reader only gets the reason's sentence */

@@ -1,9 +1,30 @@
 # Changelog
 
-## 0.3.5
+## 0.4.0
 
 Needs `@mgamadeus/ddd-admin-ui` ≥ 0.8.0 and, for the canvases, `mgamadeus/ddd-agents` / `@mgamadeus/ddd-agents` ≥ 0.3.14.
 No table change.
+
+**Behaviour change — the agent no longer overwrites blindly.** `saveDriveFile` and the browser file sink used to write
+on top of whatever version was newest. Now they compare and swap on the newest version they read, and `saveDriveFile`
+refuses a copy made from an older version of the target than its newest; the agent gets a refused line that says how
+to go on (read the target's newest version, take its changes, save again, or save under another name). A host whose
+flows relied on "the agent always overwrites" sees these refusals; nothing is written over a version a person saved
+meanwhile.
+
+**Upgrade steps for a host:**
+- Office renditions stay off until `CloudDrive.settings.officeRenditions.enabled` is set. Before switching them on:
+  route `DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage` to a transport `drive_render`, add its
+  consumer to the worker list (`config/system/workers.yaml`, only together with the transport), give that worker an
+  image with LibreOffice, fonts, `timeout` and `prlimit`, and no network beyond the object store, database and broker.
+- An environment that must not start conversions (a workspace on another environment's data) overrides
+  `DriveOfficeRenditionsService::isConversionStartAllowed()` in a same-path subclass (with its service alias).
+- `GET …/nodes/{driveNodeId}/rendition` is a read for the viewer (it may dispatch a conversion and write marker
+  objects next to the blob, never a table row): a host that classifies routes by effect lists it as a read.
+- A host that overrides the skill file `CloudDrive.Files` adds `DriveFolder` to `providesWidgetTypes` and the lines
+  on `showDriveFolder` and on the owner's edits.
+- Web: `registerCloudDriveCanvases(…)` once per page load next to `registerDriveFileCardsSource`; hand
+  `loadCodeHighlighter` and `renderMarkdown` (`MarkdownPreview untrusted`) to the drive screen and the canvases.
 
 - **Files and folders open in the canvas beside the agent chat.** `registerCloudDriveCanvases({ api, screenRoute?,
   loadPdfJs?, loadCodeHighlighter?, renderMarkdown?, store? })` (new entry `@mgamadeus/ddd-clouddrive/canvas`) registers
@@ -54,8 +75,10 @@ No table change.
 - **Drive screen:** `CloudDriveScreen` takes `loadCodeHighlighter` and `renderMarkdown` beside `loadPdfJs` and hands
   them to the file manager: the details drawer then shows Markdown as "Preview" / "Source", coloured source files,
   picture zoom and a player for video and sound (the shared viewer of admin-ui 0.8.0; the canvas shows the same).
-- Peers: `@mgamadeus/ddd-admin-ui` ≥ 0.8.0, `@mgamadeus/ddd-agents` ≥ 0.3.14 (optional, for `./agents` and `./canvas`).
-  4 new UI texts.
+- Peers: `@mgamadeus/ddd-admin-ui` ≥ 0.8.0, `@mgamadeus/ddd-agents` ≥ 0.3.14 (optional, for `./agents` and `./canvas`);
+  Composer: `mgamadeus/ddd-agents` ^0.3.14 suggested. 4 new UI texts.
+- The rendition markers are a value object (`DriveOfficeRenditionMarker`, same stored JSON); the tool examples
+  are English.
 
 ## 0.3.4
 

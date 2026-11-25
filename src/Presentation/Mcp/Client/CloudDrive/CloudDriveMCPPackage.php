@@ -118,7 +118,7 @@ class CloudDriveMCPPackage extends MCPPackage
      * `resolve` — `path=mine`, `path=theirs` or `path=both:<new name>`.
      *
      * @example {"message": "Zuordnung der Gewinncodes"}
-     * @example {"message": "Plan überarbeitet", "paths": ["reports/Plan.md"], "resolve": ["reports/Plan.md=mine"]}
+     * @example {"message": "Plan revised", "paths": ["reports/Plan.md"], "resolve": ["reports/Plan.md=mine"]}
      */
     #[MCPTool]
     #[MCPToolEffect(MCPToolEffect::WORKSPACE)]
@@ -349,7 +349,7 @@ class CloudDriveMCPPackage extends MCPPackage
      * at files themselves; never write a URL.
      *
      * @example {"path": "reports"}
-     * @example {"path": "drivespaces/library", "query": "Logo", "title": "Logos in der Bibliothek"}
+     * @example {"path": "drivespaces/library", "query": "Logo", "title": "Logos in the library"}
      */
     #[MCPTool]
     #[MCPToolEffect(MCPToolEffect::READ)]
@@ -388,7 +388,7 @@ class CloudDriveMCPPackage extends MCPPackage
      * it when the owner should look through a folder, pick from it or tidy it; a few named files are `showDriveFiles`.
      *
      * @example {"path": "reports"}
-     * @example {"path": "drivespaces/library/Brand", "title": "Logos und Vorlagen"}
+     * @example {"path": "drivespaces/library/Brand", "title": "Logos and templates"}
      */
     #[MCPTool]
     #[MCPToolEffect(MCPToolEffect::READ)]

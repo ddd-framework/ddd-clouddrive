@@ -82,6 +82,8 @@ folders and versioned files whose bytes live in object storage, working copies f
   browser file sink write on top of the newest version they read (compare and swap); a copy made from an older
   version of the target than its newest is refused with the way out
   (`CloudDriveAgentDriveStoreService::findStaleBaseRefusal()`), never written over what someone saved meanwhile.
+  **Since 0.4.0** (behaviour change): before, both wrote on top of whatever version was newest; a host flow that
+  relied on that overwrite now gets a refused line instead.
 - **Browser file sink** (with ddd-agents and ddd-agent-browser ≥ 0.2.0): `CloudDriveBrowserFileSinkService`
   implements the browser's `BrowserFileSink`. Files that leave the browser land in the own drive of the call's agent
   space in `web/<domain>/` under the renderer's names, through the upload intake: type from the bytes, an allow-list
@@ -239,6 +241,10 @@ The host provides:
 - **Transport and consumer.** Route `DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage` to the transport
   `drive_render` and run a consumer for it. A message routed nowhere is converted inside the web request: switch the
   setting on only together with the routing and the consumer.
+  The consumer goes into the worker list (`config/system/workers.yaml`) in the same change as the transport: a
+  consumer line without its transport crash-loops.
+- **Route classification.** `GET …/rendition` is a read for the viewer (read-only viewers and impersonating admins get
+  previews); it may dispatch a conversion and write marker objects next to the blob, never a table row.
 - **Image.** The consumer's image needs LibreOffice (`soffice`) and fonts; coreutils `timeout` and util-linux `prlimit`
   are used when present (`timeout` ends the whole process group).
 - **No network for the consumer.** The package cannot cut the network from PHP; give the worker an isolated egress
