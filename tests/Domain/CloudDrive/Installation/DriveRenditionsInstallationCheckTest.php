@@ -20,7 +20,7 @@ class DriveRenditionsInstallationCheckTest extends DriveOfficeRenditionTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->driveRenditionsInstallationCheckService = new RoutingTestDriveRenditionsInstallationCheckService($this->driveOfficeRenditionsService);
+        $this->driveRenditionsInstallationCheckService = new RoutingTestDriveRenditionsInstallationCheckService($this->driveOfficeRenditionsService, $this->driveBlobsService);
     }
 
     protected function routeRenditionMessageTo(string $transportName, string $dsn): void
@@ -71,7 +71,7 @@ class DriveRenditionsInstallationCheckTest extends DriveOfficeRenditionTestCase
     public function testAnEnvironmentThatStartsNoConversionGetsAWarning(): void
     {
         // a host's override of the switch: reads of this environment derive nothing, renditions do not fail more here
-        $this->driveOfficeRenditionsService->isConversionStartAllowedOverride = false;
+        $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = false;
 
         $agentInstallationFindings = $this->driveRenditionsInstallationCheckService->findInstallationFindings();
         self::assertSame(1, $agentInstallationFindings->count());

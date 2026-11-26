@@ -16,9 +16,8 @@ use DDD\Domain\Common\Services\WorkerTransportsService;
 
 /**
  * Two host settings of the rendition: the guard that keeps a conversion out of a web request (the message must be
- * routed to a transport a worker consumes) and the switch for derived objects with its deprecated rendition hook
- * ({@see DriveOfficeRenditionsService::isConversionStartAllowed()} forwards to
- * {@see DriveBlobsService::isDerivedObjectWriteAllowed()}; a host's override of either still decides).
+ * routed to a transport a worker consumes) and the switch for derived objects
+ * ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}; a host's override decides for the rendition and the SVG copy).
  */
 class DriveOfficeRenditionRoutingAndSwitchTest extends DriveOfficeRenditionTestCase
 {
@@ -139,32 +138,7 @@ class DriveOfficeRenditionRoutingAndSwitchTest extends DriveOfficeRenditionTestC
         self::assertNull($this->driveOfficeRenditionsService->findRenditionRoutingProblem(), 'renditions off: nothing to report');
     }
 
-    public function testTheDeprecatedRenditionHookAnswersTheSwitchByDefault(): void
-    {
-        self::assertTrue($this->driveOfficeRenditionsService->isConversionStartAllowed());
-        $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = false;
-        self::assertFalse($this->driveOfficeRenditionsService->isConversionStartAllowed(), 'the default forwards to the one switch');
-    }
-
-    public function testAHostOverrideOfTheDeprecatedHookStillDecidesForTheRenditionOnly(): void
-    {
-        $this->registerSanitizer();
-
-        // the host's 0.4.0 override says no, the switch says yes: no conversion, but the SVG copy is made
-        $this->driveOfficeRenditionsService->isConversionStartAllowedOverride = false;
-        $driveNode = $this->storeFile('Report.docx', $this->buildDocx());
-        $driveOfficeRendition = $this->driveOfficeRenditionsService->requestRendition($driveNode);
-        self::assertSame(DriveOfficeRendition::STATE_FAILED, $driveOfficeRendition->state);
-        self::assertSame(DriveOfficeRenditionsService::findFailureReason(DriveOfficeRenditionsService::FAILURE_NOT_STARTED_HERE), $driveOfficeRendition->reason);
-        self::assertSame([], $this->driveOfficeRenditionsService->dispatchedVersionIds);
-        self::assertFalse($this->objectStorage->objectExists(DriveOfficeRenditionsService::buildPendingMarkerStorageKey(self::BLOB_STORAGE_KEY)));
-
-        $svgNode = $this->storeFile('Logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>x()</script></svg>', self::SVG_CONTENT_TYPE);
-        self::assertTrue($this->driveContentGrantsService->createContentGrant($svgNode, DriveContentGrant::PURPOSE_INLINE)->isInline, 'the SVG copy asks the switch, not the rendition hook');
-        self::assertTrue($this->objectStorage->objectExists(DriveBlobsService::buildSanitizedSvgStorageKey(self::BLOB_STORAGE_KEY)));
-    }
-
-    public function testAHostOverrideOfTheSwitchDecidesForBothAndTheRenditionHookCanStillOpenTheRendition(): void
+    public function testAHostOverrideOfTheSwitchDecidesForTheRenditionAndTheSvgCopy(): void
     {
         $this->registerSanitizer();
         $this->driveBlobsService->isDerivedObjectWriteAllowedForTest = false;
@@ -176,12 +150,6 @@ class DriveOfficeRenditionRoutingAndSwitchTest extends DriveOfficeRenditionTestC
         $svgNode = $this->storeFile('Logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>x()</script></svg>', self::SVG_CONTENT_TYPE);
         self::assertFalse($this->driveContentGrantsService->createContentGrant($svgNode, DriveContentGrant::PURPOSE_INLINE)->isInline);
         self::assertFalse($this->objectStorage->objectExists(DriveBlobsService::buildSanitizedSvgStorageKey(self::BLOB_STORAGE_KEY)));
-
-        // a host that kept its 0.4.0 override answering yes: the rendition starts, the SVG copy still follows the switch
-        $this->driveOfficeRenditionsService->isConversionStartAllowedOverride = true;
-        $driveNode = $this->storeFile('Report.docx', $this->buildDocx());
-        self::assertSame(DriveOfficeRendition::STATE_PENDING, $this->driveOfficeRenditionsService->requestRendition($driveNode)->state);
-        self::assertSame([70], $this->driveOfficeRenditionsService->dispatchedVersionIds);
     }
 
     protected function registerSanitizer(): void

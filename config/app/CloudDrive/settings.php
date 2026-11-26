@@ -99,6 +99,11 @@ return [
     'systemFolders' => [
         'work' => ['expiryDays' => 7],
     ],
+    // root folders whose files are a person's own data (audience PERSONAL of the file source `drive`: never copied into
+    // another store, never kept for a model); none by default, a host names its own (e.g. ['customer-files'])
+    'personalFolders' => [],
+    // the largest file DriveImportsService copies in from another file source; null = the default of 50 MB
+    'maxImportBytes' => null,
     // paths never taken into a working copy commit (gitignore-like prefixes and names)
     'workingCopyExcludedNames' => ['.venv', 'node_modules', '__pycache__', '.git', '.runner', '.cache', 'mounts', 'drivespaces'],
 ];

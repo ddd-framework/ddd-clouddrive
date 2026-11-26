@@ -92,9 +92,11 @@ class DriveWorkingCopiesService extends EntitiesService
         $repoClass = $this->getEntityRepoClassInstance();
         $queryBuilder = $repoClass::createQueryBuilder();
         $alias = $repoClass::getBaseModelAlias();
-        $queryBuilder->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
+        // DQL orders by a selected value only, never by an expression: the last change is a hidden select
+        $queryBuilder->addSelect("COALESCE({$alias}.updated, {$alias}.created) AS HIDDEN lastChangeOrder")
+            ->andWhere("{$alias}.driveSpaceId = :driveSpaceId")
             ->setParameter('driveSpaceId', (int)$driveSpace->id)
-            ->orderBy("COALESCE({$alias}.updated, {$alias}.created)", 'DESC')
+            ->orderBy('lastChangeOrder', 'DESC')
             ->addOrderBy("{$alias}.id", 'DESC')
             ->setMaxResults(1);
         $driveWorkingCopy = $repoClass->find($queryBuilder, false);

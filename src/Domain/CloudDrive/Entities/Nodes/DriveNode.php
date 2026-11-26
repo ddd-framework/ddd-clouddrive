@@ -45,6 +45,9 @@ class DriveNode extends Entity
     public const string ORIGIN_COPY = 'COPY';
     public const string ORIGIN_MIGRATED = 'MIGRATED';
 
+    /** @var string Copied in from another file source (a media library, an attachment) by {@see \DDD\Domain\CloudDrive\Services\DriveImportsService} */
+    public const string ORIGIN_IMPORT = 'IMPORT';
+
     /** @var string The prefix of the name slot of a trashed node; a name never contains a slash */
     public const string TRASHED_NAME_SLOT_PREFIX = "/trashed/";
 

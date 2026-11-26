@@ -254,18 +254,6 @@ class DriveOfficeRenditionsService extends Service
     }
 
     /**
-     * Whether a request may start a conversion.
-     *
-     * @deprecated since 0.4.1, removed in 0.5.0: override {@see DriveBlobsService::isDerivedObjectWriteAllowed()}, the
-     * one switch for every derived object. Still asked by {@see requestRendition()}, so a host's same-path override of
-     * this method keeps deciding for the rendition; the default answers the switch.
-     */
-    public function isConversionStartAllowed(): bool
-    {
-        return $this->getDriveBlobsService()->isDerivedObjectWriteAllowed();
-    }
-
-    /**
      * Whether {@see DriveOfficeRenditionMessage} goes to a worker when dispatched: it is routed (by its class, a parent
      * class, an interface or `*`, as Messenger's senders locator matches) to at least one transport that a worker
      * consumes, i.e. one that is not synchronous (`sync://`, `in-memory://`). Read from the compiled container's
@@ -314,7 +302,7 @@ class DriveOfficeRenditionsService extends Service
      * after the checks of every content read (the read right on the space, the trash rule, a released blob):
      * READY with a grant of the purpose RENDITION, FAILED with the reason, or PENDING — the first PENDING dispatches
      * the conversion ({@see DriveOfficeRenditionMessage}), every further one only reads the store. Where no conversion may
-     * be started ({@see isConversionStartAllowed()}, by default {@see DriveBlobsService::isDerivedObjectWriteAllowed()})
+     * be started ({@see DriveBlobsService::isDerivedObjectWriteAllowed()})
      * it only answers a stored PDF. A web request never converts: while the message is routed to no worker
      * ({@see isRenditionMessageRoutedToWorker()}) it answers a stored state and otherwise FAILED
      * ({@see FAILURE_NOT_ROUTED_TO_WORKER}), and the issues log gets one warning per process.
@@ -332,7 +320,7 @@ class DriveOfficeRenditionsService extends Service
         if (!$this->isRenditionOffered($driveNode, (int)$driveBlob->sizeBytes, $driveBlob->contentType)) {
             throw new BadRequestException('This file has no PDF rendition.');
         }
-        if (!$this->isConversionStartAllowed()) {
+        if (!$this->getDriveBlobsService()->isDerivedObjectWriteAllowed()) {
             // read only: the stored PDF or nothing. No marker is read, written or removed, nothing is dispatched
             $renditionDelivery = $this->findRenditionDelivery($driveNode, $driveFileVersion, $driveBlob);
             return $renditionDelivery !== null

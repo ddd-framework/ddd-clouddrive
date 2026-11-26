@@ -17,6 +17,7 @@ use DDD\Domain\AI\Services\Drives\AgentDriveFileContentReader;
 use DDD\Domain\AI\Services\Drives\AgentDriveStore;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Content\DriveContentGrant;
+use DDD\Domain\CloudDrive\Entities\Imports\DriveImportOptions;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileWrite;
@@ -25,10 +26,13 @@ use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveContentGrantsService;
+use DDD\Domain\CloudDrive\Services\DriveImportsService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 use DDD\Domain\CloudDrive\Services\DriveWorkingCopiesService;
+use DDD\Domain\Common\Entities\Files\Sources\FileReference;
+use DDD\Domain\Common\Entities\Files\Sources\FileReferences;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
 use DDD\Infrastructure\Exceptions\NotFoundException;
@@ -155,7 +159,14 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         $targetFolderNode = $this->getDriveNodesService()->findOrCreateFolderPath($targetSpace, $targetFolderPath);
         $agentDriveSaveResult = new AgentDriveSaveResult();
         $agentDriveSaveResult->savedFiles = new AgentDriveFiles();
+        $importedFileReferences = new FileReferences();
         foreach ($sourcePaths as $sourcePath) {
+            $importedFileReference = $this->findFileReferenceOfAnotherSource($sourcePath);
+            if ($importedFileReference !== null) {
+                // a file of another file source (a media library, an attachment): the drive's import copies it in
+                $importedFileReferences->add($importedFileReference);
+                continue;
+            }
             try {
                 $sourceMount = $this->requireMount($sourcePath);
                 $sourceSpace = $this->requireSpaceOfMount($sourceMount);
@@ -221,7 +232,56 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': ' . $refusal->getMessage();
             }
         }
+        if ($importedFileReferences->count() > 0) {
+            $this->importFilesOfOtherSources($callProvenance, $importedFileReferences, $targetMount, $targetSpace, $targetFolderPath, $agentDriveSaveResult);
+        }
         return $agentDriveSaveResult;
+    }
+
+    /**
+     * The file reference of a source argument that names a file of another file source (`media/901`): resolved by
+     * the agent's file source adapter, so its mount is not one of this store.
+     */
+    protected function findFileReferenceOfAnotherSource(AgentDrivePath $sourcePath): ?FileReference
+    {
+        if ($sourcePath->reference === null || ($sourcePath->agentDriveMount?->storeName ?? self::STORE_NAME) === self::STORE_NAME) {
+            return null;
+        }
+        return FileReference::tryFromString($sourcePath->reference);
+    }
+
+    /**
+     * Copies files of other file sources into the target folder through {@see DriveImportsService} (source rights,
+     * the application's flow rule, the drive's ingest) and adds what it wrote and refused to the result. The owner's
+     * consent counts as given where the tool asked for it (a mount with `WRITE_WITH_CONSENT`); the sandbox's working
+     * copy is marked for a pull, so a script sees the files at its next call.
+     *
+     */
+    protected function importFilesOfOtherSources(
+        AgentToolCallProvenance $callProvenance,
+        FileReferences $fileReferences,
+        AgentDriveMount $targetMount,
+        DriveSpace $targetSpace,
+        string $targetFolderPath,
+        AgentDriveSaveResult $agentDriveSaveResult
+    ): void {
+        $driveImportOptions = new DriveImportOptions();
+        $driveImportOptions->hasOwnerConsent = $targetMount->getEffectiveWriteMode() === AgentDriveMount::MODE_WRITE_WITH_CONSENT;
+        $driveImportOptions->isOwnDrive = $targetMount->isOwnDrive;
+        $driveImportOptions->workingCopyKey = $targetMount->isOwnDrive ? $this->findOwnWorkingCopyOfCall($callProvenance, $targetSpace)?->workingCopyKey : null;
+        try {
+            $driveImportResult = $this->getDriveImportsService()->importFiles($fileReferences, $targetSpace, $targetFolderPath, $driveImportOptions);
+        } catch (NotFoundException|BadRequestException|ForbiddenException $refusal) {
+            foreach ($fileReferences->getElements() as $fileReference) {
+                $agentDriveSaveResult->refusedLines[] = $fileReference->toString() . ': ' . $refusal->getMessage();
+            }
+            return;
+        }
+        foreach ($driveImportResult->importedFiles->getElements() as $driveImportedFile) {
+            $agentDriveFile = $this->buildAgentDriveFile($targetMount, $driveImportedFile->driveNode);
+            $agentDriveSaveResult->savedFiles->add($agentDriveFile);
+        }
+        $agentDriveSaveResult->refusedLines = [...$agentDriveSaveResult->refusedLines, ...$driveImportResult->refusedLines];
     }
 
     /**
@@ -550,6 +610,13 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         /** @var DriveBlobsService $driveBlobsService */
         $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
         return $driveBlobsService;
+    }
+
+    protected function getDriveImportsService(): DriveImportsService
+    {
+        /** @var DriveImportsService $driveImportsService */
+        $driveImportsService = DDDService::instance()->getService(DriveImportsService::class);
+        return $driveImportsService;
     }
 
     protected function getDriveWorkingCopiesService(): DriveWorkingCopiesService

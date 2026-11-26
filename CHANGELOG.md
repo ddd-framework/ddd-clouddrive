@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.0
+
+**The drive is a file source, and takes files of other sources.** Requires `mgamadeus/ddd` ^3.48.0 (the `FileSource`
+port). No table change; the npm package is unchanged apart from its version.
+
+- **New `CloudDriveFileSourceService`** (source `drive`, reference `drive/<nodeId>`): facts and bytes of a file node
+  under the reader's rights, the released current version only (a file in the scan, blocked or in the trash has no
+  content), read through `resolveContentDelivery()` and the object storage on the server. Audience: PERSONAL below a
+  personal root folder (`CloudDrive.settings.personalFolders`, none by default: a host that keeps people's own data in
+  root folders names them, e.g. `['customer-files']`), SHARED in a shared space, else INTERNAL. Objects of the blob store that are no drive file (other prefixes of the same bucket) are never
+  reachable: the source reads node → version → blob only.
+- **New `DriveImportsService::importFiles(FileReferences $fileReferences, DriveSpace $driveSpace, string $folderPath,
+  ?DriveImportOptions $driveImportOptions = null): DriveImportResult`**: copies files of any `FileSource` into a
+  folder. Per file: the write right of the space, the application's flow rule
+  (`FileFlowPolicyService::decideFileFlow()` with `FileFlowTarget::forStore('drive', …)`; a refusal becomes a line of
+  the result, a needed consent stops the file until `DriveImportOptions::$hasOwnerConsent`), the bytes read capped
+  (`CloudDrive.settings.maxImportBytes`, default 50 MB), metadata removed when the rule says so, then the drive's own
+  write path (version, ingest and scan as every upload; origin `IMPORT`, comment `imported from <label>
+  (<reference>)`). The history shows `IMPORTED from <label> (<reference>)` (a host event, no schema change);
+  `expiresAfterDays` of the decision is set on the node. At most 50 files per call. Working copies are asked to pull.
+- **`CloudDriveAgentDriveStoreService::saveDriveFiles()` copies across stores**: a source that is a reference of
+  another file source (ddd-agents ≥ 0.7.0 hands it over with the mount store `files`) goes through
+  `DriveImportsService`; the owner's consent of a `WRITE_WITH_CONSENT` mount counts as the consent of the flow rule.
+- New `DriveNode::ORIGIN_IMPORT`.
+- **Removed (deprecated since 0.4.1): `DriveOfficeRenditionsService::isConversionStartAllowed()`.** The rendition route
+  and the installation check `driveRenditions` ask `DriveBlobsService::isDerivedObjectWriteAllowed()`, the one switch for
+  every derived object. A host's same-path override of the removed method no longer decides anything: move it to the
+  switch.
+- **Fix: `DriveWorkingCopiesService::findNewestWorkingCopy()` threw a DQL syntax error** (`ORDER BY COALESCE(…)`:
+  DQL orders by a selected value only). The last change is a hidden select now. The lookup was reached only by a
+  caller without a working copy key (a sandbox that named none, the browser file sink, and now the import).
+- Tests: the source (rights, audiences, unreleased and trashed files, foreign objects of the bucket never read), the
+  import (rights, refusal, consent, cap, metadata, expiry, history), the agent store's cross-store save.
+
+
 ## 0.4.2
 
 The drive takes part in `app:agent:check-installation` of `mgamadeus/ddd-agents` ≥ 0.5.0 (registered only beside it,

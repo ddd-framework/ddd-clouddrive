@@ -41,9 +41,6 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
     /** @var string[] The routing problems written to the issues log */
     public array $loggedRenditionRoutingProblems = [];
 
-    /** @var bool|null A host's same-path override of the deprecated hook; null = the package's default (the switch) */
-    public ?bool $isConversionStartAllowedOverride = null;
-
     /** @var string|null What the converter writes as its PDF; null = it writes nothing */
     public ?string $convertedBytes = "%PDF-1.7\nfake rendition";
 
@@ -74,11 +71,6 @@ class RenditionTestDriveOfficeRenditionsService extends DriveOfficeRenditionsSer
         $this->testWorkerTransportsService = new WorkerTransportsService();
         // every test starts as a fresh process: the routing warning has not been written yet
         static::$isRenditionRoutingProblemLogged = false;
-    }
-
-    public function isConversionStartAllowed(): bool
-    {
-        return $this->isConversionStartAllowedOverride ?? parent::isConversionStartAllowed();
     }
 
     protected function isConversionInsideThisProcessAllowed(): bool

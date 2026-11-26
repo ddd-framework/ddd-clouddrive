@@ -9,6 +9,7 @@ use DDD\Domain\AI\Entities\Installation\AgentInstallationFindings;
 use DDD\Domain\AI\Services\Installation\AgentInstallationCheckInterface;
 use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionHandler;
 use DDD\Domain\CloudDrive\MessageHandlers\DriveOfficeRenditionMessage;
+use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveOfficeRenditionsService;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\Service;
@@ -63,13 +64,18 @@ class DriveRenditionsInstallationCheckService extends Service implements AgentIn
 
     /**
      * Whether this environment starts conversions: what the rendition route asks
-     * ({@see DriveOfficeRenditionsService::isConversionStartAllowed()}, deprecated, whose default answers
-     * {@see \DDD\Domain\CloudDrive\Services\DriveBlobsService::isDerivedObjectWriteAllowed()}), so a host's override of
-     * either decides here too.
+     * ({@see DriveBlobsService::isDerivedObjectWriteAllowed()}), so a host's override decides here too.
      */
     protected function isConversionStartedHere(DriveOfficeRenditionsService $driveOfficeRenditionsService): bool
     {
-        return $driveOfficeRenditionsService->isConversionStartAllowed();
+        return $this->getDriveBlobsService()->isDerivedObjectWriteAllowed();
+    }
+
+    protected function getDriveBlobsService(): DriveBlobsService
+    {
+        /** @var DriveBlobsService $driveBlobsService */
+        $driveBlobsService = DDDService::instance()->getService(DriveBlobsService::class);
+        return $driveBlobsService;
     }
 
     protected function getDriveOfficeRenditionsService(): DriveOfficeRenditionsService
