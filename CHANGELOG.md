@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- README: section "Files of other sources" (the source `drive`, its audiences and `personalFolders`, and
+  `DriveImportsService::importFiles()` with its order of checks, options, result and refusals). Documentation only.
+
 ## 0.5.0
 
 **The drive is a file source, and takes files of other sources.** Requires `mgamadeus/ddd` ^3.48.0 (the `FileSource`

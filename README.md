@@ -304,6 +304,54 @@ read, written or removed and nothing is dispatched. An SVG is served as its sani
 exists; none is made, and the SVG stays an attachment. Uploads, versions and purges are writes of their own and do
 not ask the switch.
 
+## Files of other sources: the source `drive` and imports
+
+Needs `mgamadeus/ddd` ≥ 3.48.0 (the `FileSource` port; Core skill `ddd-files-specialist`).
+
+**The drive is the file source `drive`** (`CloudDriveFileSourceService`, reference `drive/<nodeId>`). Facts and bytes
+of a file node under the reader's rights; only the released current version (a file in its scan, blocked or in the
+trash has no content), read through the same checks as a download and the object store on the server. Objects of the
+bucket that belong to no drive file are out of reach: the source reads node → version → blob only, never a key. At
+most 200 ids per facts call.
+
+Audience per file, by its path:
+
+| Where the file lies | Audience |
+|---|---|
+| below a root folder named in `CloudDrive.settings.personalFolders` | `PERSONAL` (a person's own data; never copied into another store, never kept for a model) |
+| in a shared space | `SHARED` |
+| anywhere else | `INTERNAL` |
+
+`personalFolders` is empty by default; a host that keeps people's own data in root folders names them
+(`'personalFolders' => ['customer-files']`). The first path segment decides, so a copy of a copy below such a folder
+stays personal; `customer-files-old/x` is not below `customer-files`.
+
+**`DriveImportsService::importFiles(FileReferences $fileReferences, DriveSpace $driveSpace, string $folderPath,
+?DriveImportOptions $driveImportOptions = null): DriveImportResult`** copies files of any source into a folder of a
+space (created when missing). 1 to 50 files per call (`MAX_FILES_PER_IMPORT`). Per file, in this order:
+
+1. the write right on the space (else 403 for the whole call), the folder path stays inside the space (else 400);
+2. the source's facts under the caller's rights (an unknown or unreadable file is a refused line);
+3. the application's flow rule (`FileFlowPolicyService::decideFileFlow()` with `FileFlowTarget::forStore('drive', …)`,
+   the audience of the target folder from the table above): a refusal is a refused line; `requiresOwnerConsent`
+   without `DriveImportOptions::$hasOwnerConsent` stops the file and sets `DriveImportResult::$needsOwnerConsent`;
+4. the bytes, capped by `CloudDrive.settings.maxImportBytes` (default 50 MB) and the space's largest file;
+5. image metadata removed when the decision says `stripsMetadata`;
+6. the drive's own write: a version of the file of the same name (unchanged bytes = no new version), origin `IMPORT`,
+   comment `imported from <container> (<reference>)`, the history event `IMPORTED`, ingest and malware scan as every
+   upload; `expiresAfterDays` of the decision sets the node's expiry.
+
+`DriveImportOptions`: `hasOwnerConsent`, `isOwnDrive` (the target is the caller's own drive), `workingCopyKey` (the
+caller's working copy, which does not need to pull), `scanWaitSeconds` (how long the call waits for the scan, default
+20). `DriveImportResult`: `importedFiles` (`DriveImportedFile`: `sourceFileReference`, `driveNode`, `path`,
+`isUnchanged`, `isMetadataRemoved`, `contentState`), `refusedLines` (one sentence per file not copied, also a file
+whose scan blocked it), `needsOwnerConsent`. A refused file never stops the others. Working copies of the space are
+asked to pull.
+
+`CloudDriveAgentDriveStoreService::saveDriveFiles()` (beside `mgamadeus/ddd-agents` ≥ 0.7.0) goes through the import
+when a source is a reference of another file source; the owner's consent of a `WRITE_WITH_CONSENT` mount counts as the
+consent of the flow rule.
+
 ## Frontend
 
 The npm package `@mgamadeus/ddd-clouddrive` lives in `web/` and is released with the same tag and version: the RTK Query
