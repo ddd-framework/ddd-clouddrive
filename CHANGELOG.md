@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+
+- Skill `ddd-module-clouddrive-specialist`: host duties (rights extension, personal folders, the admin and content
+  routes, the partner audience, the npm screen, canvas viewer and cards source), the admin endpoints in short,
+  `findAudienceOfPath()`, the import chain per file (`buildFileName()`, `buildSourceLabel()`, the caps) with example
+  answers, and `importFilesOfOtherSources()` (how the agent's mount sets the import options). Documentation only.
+
 ## 0.5.2
 
 - New agent skill for developers: `.claude/skills/ddd-module-clouddrive-specialist` (a map of the drive's topics to the

@@ -1,9 +1,9 @@
 ---
 name: ddd-module-clouddrive-specialist
-description: "Installs, wires and extends mgamadeus/ddd-clouddrive, the file drive of a DDD application: spaces, rights extensions, audiences, type policies, files, versions, blobs, ingest and malware scan, streamed bytes through the backend, content grants, working copies, office renditions, transfers, the media bridge. Covers the file source drive (drive/<nodeId>, released version only, audience by path, personalFolders), DriveImportsService::importFiles (FileReferences, DriveImportOptions, DriveImportResult, refusals, needsOwnerConsent, expiry, scan wait, 50 files / 50 MB, origin IMPORT), the switch isDerivedObjectWriteAllowed, and the agent part (CloudDriveAgentDriveStoreService behind agent.drive, own drive per agent space). Use when adding the drive to an application, granting a team or partner access to a space, a file is not readable or stays in its scan, copying media or attachments into a drive, deciding which folders hold personal data, renditions do not start, or wiring the drive for the agent."
+description: "Installs, wires and extends mgamadeus/ddd-clouddrive, the file drive of a DDD application: spaces, rights extensions, audiences, files, versions, ingest and scan, streamed bytes, working copies, renditions, transfers. Covers the file source drive (drive/<nodeId>, released version only, audience by path, personalFolders), DriveImportsService::importFiles (options, result, refusals, needsOwnerConsent, expiry, scan wait, 50 files / 50 MB), isDerivedObjectWriteAllowed, host duties (rights extension, routes CloudDriveControllerTrait and CloudDriveContentControllerTrait, partner audience), the npm screen and canvas viewer, and the agent part (CloudDriveAgentDriveStoreService, importFilesOfOtherSources). Use when adding the drive to an application, granting a team or partner access to a space, a file is not readable or stays in its scan, copying media or attachments into a drive, deciding which folders hold personal data, renditions do not start, or wiring the drive for the agent."
 metadata:
   author: mgamadeus
-  version: 0.5.2
+  version: 0.5.3
   framework: mgamadeus/ddd-clouddrive >= 0.5.0
 ---
 
@@ -25,6 +25,31 @@ the parts that connect the drive to the rest of the system (file sources, import
 | Files of other sources: the source `drive`, imports | "Files of other sources"; `Services/Files/CloudDriveFileSourceService.php`, `DriveImportsService` |
 | Agent part | "What it does" › Agent part; `Services/AI/` |
 | Installation, config files, transports | "Install"; `config/app/CloudDrive/settings.php`, `spaceKinds.php`, `typePolicies.php` |
+
+## Host duties (installation in short)
+
+1. `composer require mgamadeus/ddd-clouddrive`, config files under `config/app/CloudDrive/` (`settings.php`,
+   `spaceKinds.php`, `typePolicies.php`), the store in `Common.ObjectStorage`, the Messenger transports (README "Install").
+2. **Rights for spaces:** a `DriveSpaceRightsExtension` service (tag `clouddrive.space_rights_extension`) that answers
+   which spaces the running account reads and writes; without one only admins see anything.
+3. **Personal folders:** name the root folders that hold people's own data in `CloudDrive.settings.personalFolders`
+   (default none), e.g. `['customer-files']`.
+4. **Routes:** one admin controller with `CloudDriveControllerTrait` (`#[Route('/common/cloudDrive')]`, access hook
+   `throwForbiddenUnlessCloudDriveAccessAllowed()`, `getDriveAudience()` INTERNAL; a second controller with SHARED
+   mounts the same actions for partners: reads, writes where the space is not write-locked, no manage actions), and
+   one public controller with `CloudDriveContentControllerTrait` (`#[Route('/drive/content')]`, streams bytes for
+   short-lived signed content tokens). The file route of Core (`FileSourcesControllerTrait`) serves `drive/<id>` too.
+5. **Frontend** (npm `@mgamadeus/ddd-clouddrive`, same version): `.` the RTK Query client of the admin endpoints,
+   `./screen` the drive screen (`CloudDriveScreen`, `CloudDriveSpacePicker`, on the file manager of
+   `@mgamadeus/ddd-admin-ui/files`), `./canvas` the viewer beside the agent chat (`registerCloudDriveCanvases()` once
+   before the first chat: canvas kinds `cloudDriveFile` and `cloudDriveFolder`, the `DriveFolder` block, the canvas
+   opener for `DriveFiles` rows), `./agents` the source of the `DriveFiles` cards (`createCloudDriveCardsSource` for `registerDriveFileCardsSource` of ddd-agents).
+6. Nothing else of the files concept: the source `drive` and the import register themselves.
+
+Admin endpoints of `CloudDriveControllerTrait` (prefix of the host's controller): spaces (`/spaces/list`,
+`/spaces/{id}`, children, folders, search, trash, resolve), uploads (`/spaces/{id}/uploads`, `/uploads/{blobId}/parts`,
+`/content`, `/complete`), nodes (`/nodes/{id}`, content, rendition, move, metadata, trash, restore, versions and their
+restore, events), bulk (`/spaces/{id}/nodes/move|trash|restore|purge`, transfer preview and transfer) and `/cards`.
 
 ## Rules that bite
 
@@ -49,7 +74,8 @@ the parts that connect the drive to the rest of the system (file sources, import
 with the checks of a download. It reads node → version → blob, never a key, so objects of the bucket that belong to
 no drive file are out of reach. At most 200 ids per facts call.
 
-Audience per file, by the FIRST segment of its path in the space:
+`CloudDriveFileSourceService::findAudienceOfPath(DriveSpace $driveSpace, string $path): string` decides the audience
+per file, by the FIRST segment of its path in the space (`getPersonalFolders()` reads the setting):
 
 | Where | Audience |
 |---|---|
@@ -83,6 +109,24 @@ folder (created when missing). 1–50 files (`MAX_FILES_PER_IMPORT`). Per file:
 | `DriveImportResult` | `importedFiles` (`DriveImportedFiles`), `refusedLines` (one sentence per file not copied), `needsOwnerConsent`; `hasImportedFiles()` |
 | `DriveImportedFile` | `sourceFileReference`, `driveNode`, `path`, `isUnchanged`, `isMetadataRemoved`, `contentState` |
 
+The chain per file: `FileSourcesService::requireFileFacts()` → `FileFlowPolicyService::decideFileFlow(facts,
+FileFlowTarget::forStore('drive', findAudienceOfPath(space, folder), <space label>, isOwnDrive, folder))` →
+`FileSourcesService::readFileContent(ref, min(getMaxImportBytes(), space limit))` → metadata removed if the decision
+says so → `importFileContent()` (name `buildFileName()`: the source's name made safe for a node, else
+`<source>-<id>`; comment from `buildSourceLabel()`: `Media library (media/901)`) → ingest and scan wait →
+`applyExpiry()` → a `DriveImportedFile`.
+
+Answers (examples):
+
+| Case | Result |
+|---|---|
+| allowed, copied | `importedFiles` has the file (its own reference `drive/<nodeId>`), `refusedLines` empty |
+| same bytes already there | `isUnchanged = true`, no new version |
+| a PERSONAL file into a shared space | a refused line with the rule's `refusalReason`; nothing copied |
+| the rule asks for consent, `hasOwnerConsent` false | `needsOwnerConsent = true`, a refused line; ask the owner, call again with consent |
+| the space is read-only for the caller | `ForbiddenException` for the whole call |
+| over the size cap | a refused line ("larger than …") |
+
 A file whose scan blocks it is a refused line ("copied to …, but the drive did not release its content"). One refused
 file never stops the others; the space's working copies are asked to pull afterwards.
 
@@ -101,6 +145,10 @@ installation check `driveRenditions` of ddd-agents reports it.
   `readDriveDocument` / `viewDriveDocumentPages`. `saveDriveFiles()` copies a source that is a reference of another
   file source through `DriveImportsService`; the owner's consent of a `WRITE_WITH_CONSENT` mount counts as the flow
   rule's consent.
+- `importFilesOfOtherSources()` (protected, override point) builds the import for the agent: `hasOwnerConsent` =
+  the mount's mode is `WRITE_WITH_CONSENT` (the tool already asked the owner), `isOwnDrive` = the mount is the agent
+  space's own drive, `workingCopyKey` = the sandbox's own working copy of the call (it sees the files at its next
+  call without a pull); a refused import becomes refused lines of the tool's answer, copied files its saved files.
 - Mounts: `DriveSpaceMountResolverService` (a host overrides it); by default one own drive per agent space, created
   on first use, linked in `AgentSpaceDriveSpaces`, readable through `AgentOwnDriveSpaceRightsExtensionService`.
 - Tools `clouddrive.files` (`CloudDriveMCPPackage`), widgets `DriveFolder` / `DriveLocation`, skill `CloudDrive.Files`,
