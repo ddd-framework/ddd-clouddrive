@@ -3,7 +3,7 @@ name: ddd-module-clouddrive-specialist
 description: "Installs, wires and extends mgamadeus/ddd-clouddrive, the file drive of a DDD application: spaces, rights extensions, audiences, files, versions, ingest and scan, streamed bytes, working copies, renditions, transfers. Covers the file source drive (drive/<nodeId>, released version only, audience by path, personalFolders), DriveImportsService::importFiles (options, result, refusals, needsOwnerConsent, expiry, scan wait, 50 files / 50 MB), isDerivedObjectWriteAllowed, host duties (rights extension, routes CloudDriveControllerTrait and CloudDriveContentControllerTrait, partner audience), the npm screen and canvas viewer, and the agent part (CloudDriveAgentDriveStoreService, importFilesOfOtherSources). Use when adding the drive to an application, granting a team or partner access to a space, a file is not readable or stays in its scan, copying media or attachments into a drive, deciding which folders hold personal data, renditions do not start, or wiring the drive for the agent."
 metadata:
   author: mgamadeus
-  version: 0.5.3
+  version: 0.5.4
   framework: mgamadeus/ddd-clouddrive >= 0.5.0
 ---
 
@@ -103,16 +103,20 @@ folder (created when missing). 1–50 files (`MAX_FILES_PER_IMPORT`). Per file:
    origin `IMPORT`, comment `imported from <container> (<reference>)`, history event `IMPORTED`, ingest and scan; the
    call waits up to `scanWaitSeconds` (default 20) for the scan; `expiresAfterDays` of the decision sets the expiry.
 
+`findImportRefusals()` (same arguments) runs only the checks before the bytes — write right, facts, flow rule,
+consent — and answers the refused files without writing anything.
+
 | Type | Fields |
 |---|---|
-| `DriveImportOptions` | `hasOwnerConsent`, `isOwnDrive`, `workingCopyKey` (the caller's own working copy needs no pull), `scanWaitSeconds` |
-| `DriveImportResult` | `importedFiles` (`DriveImportedFiles`), `refusedLines` (one sentence per file not copied), `needsOwnerConsent`; `hasImportedFiles()` |
+| `DriveImportOptions` | `hasOwnerConsent`, `isOwnDrive`, `workingCopyKey` (the caller's own working copy: it is marked for a pull together with the space's newest one, so it sees the files at its next call), `scanWaitSeconds` |
+| `DriveImportResult` | `importedFiles` (`DriveImportedFiles`), `refusedLines` (one sentence per file not copied), `refusedFileReferences`, `needsOwnerConsent`; `hasImportedFiles()` |
 | `DriveImportedFile` | `sourceFileReference`, `driveNode`, `path`, `isUnchanged`, `isMetadataRemoved`, `contentState` |
 
 The chain per file: `FileSourcesService::requireFileFacts()` → `FileFlowPolicyService::decideFileFlow(facts,
 FileFlowTarget::forStore('drive', findAudienceOfPath(space, folder), <space label>, isOwnDrive, folder))` →
 `FileSourcesService::readFileContent(ref, min(getMaxImportBytes(), space limit))` → metadata removed if the decision
-says so → `importFileContent()` (name `buildFileName()`: the source's name made safe for a node, else
+says so (the strip may write another format: a HEIC picture becomes a JPEG, and name extension and content type
+follow the bytes, `adaptNameAndTypeToBytes()`) → `importFileContent()` (name `buildFileName()`: the source's name made safe for a node, else
 `<source>-<id>`; comment from `buildSourceLabel()`: `Media library (media/901)`) → ingest and scan wait →
 `applyExpiry()` → a `DriveImportedFile`.
 
@@ -123,7 +127,7 @@ Answers (examples):
 | allowed, copied | `importedFiles` has the file (its own reference `drive/<nodeId>`), `refusedLines` empty |
 | same bytes already there | `isUnchanged = true`, no new version |
 | a PERSONAL file into a shared space | a refused line with the rule's `refusalReason`; nothing copied |
-| the rule asks for consent, `hasOwnerConsent` false | `needsOwnerConsent = true`, a refused line; ask the owner, call again with consent |
+| the rule asks for consent, `hasOwnerConsent` false | `needsOwnerConsent = true`, a refused line; a caller that holds the owner's yes calls again with `hasOwnerConsent` (the agent cannot: its consent comes only from a `WRITE_WITH_CONSENT` mount) |
 | the space is read-only for the caller | `ForbiddenException` for the whole call |
 | over the size cap | a refused line ("larger than …") |
 
@@ -147,8 +151,13 @@ installation check `driveRenditions` of ddd-agents reports it.
   rule's consent.
 - `importFilesOfOtherSources()` (protected, override point) builds the import for the agent: `hasOwnerConsent` =
   the mount's mode is `WRITE_WITH_CONSENT` (the tool already asked the owner), `isOwnDrive` = the mount is the agent
-  space's own drive, `workingCopyKey` = the sandbox's own working copy of the call (it sees the files at its next
-  call without a pull); a refused import becomes refused lines of the tool's answer, copied files its saved files.
+  space's own drive, `workingCopyKey` = the sandbox's own working copy of the call (marked for a pull, so the script
+  sees the files at its next call); a refused import becomes refused lines of the tool's answer, copied files its saved
+  files.
+- `CloudDriveAgentDriveSavePrecheckService` (ddd-agents ≥ 0.7.9, `AgentDriveSavePrecheck`): before `saveDriveFile` asks
+  the owner for a consent mount, it runs `DriveImportsService::findImportRefusals()` (write right, facts, flow rule; no
+  byte read, nothing written) for the files of other sources, so a copy the rule refuses is never put to the owner.
+  The mount consent itself stays: writing into a space outside people see asks the owner even for a PUBLIC file.
 - Mounts: `DriveSpaceMountResolverService` (a host overrides it); by default one own drive per agent space, created
   on first use, linked in `AgentSpaceDriveSpaces`, readable through `AgentOwnDriveSpaceRightsExtensionService`.
 - Tools `clouddrive.files` (`CloudDriveMCPPackage`), widgets `DriveFolder` / `DriveLocation`, skill `CloudDrive.Files`,

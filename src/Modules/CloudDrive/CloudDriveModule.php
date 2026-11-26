@@ -20,6 +20,9 @@ class CloudDriveModule extends DDDModule
     /** @var string A class of ddd-agents ≥ 0.1.29: the eval isolation registers only beside it */
     public const string AGENTS_EVAL_PARTICIPANT_CLASS = 'DDD\\Domain\\AI\\Services\\Eval\\AgentEvalWorkspaceParticipant';
 
+    /** @var string The save precheck port of ddd-agents ≥ 0.7.9: the drive's precheck registers only beside it */
+    public const string AGENTS_SAVE_PRECHECK_CLASS = 'DDD\\Domain\\AI\\Services\\Drives\\AgentDriveSavePrecheck';
+
     /** @var string The file sink port of ddd-agent-browser ≥ 0.2.0: the drive's browser sink registers only beside it */
     public const string BROWSER_FILE_SINK_CLASS = 'DDD\\Domain\\AI\\Services\\Browser\\BrowserFileSink';
 
@@ -58,6 +61,8 @@ class CloudDriveModule extends DDDModule
             'DDD\\Domain\\CloudDrive\\Services\\AI\\Eval\\' => self::AGENTS_EVAL_PARTICIPANT_CLASS,
             // a class below Browser\\ needs the browser's file sink port and the drive store (all matching prefixes apply)
             'DDD\\Domain\\CloudDrive\\Services\\AI\\Browser\\' => self::BROWSER_FILE_SINK_CLASS,
+            // a class below SavePrecheck\\ needs the save precheck port of ddd-agents >= 0.7.9
+            'DDD\\Domain\\CloudDrive\\Services\\AI\\SavePrecheck\\' => self::AGENTS_SAVE_PRECHECK_CLASS,
             'DDD\\Domain\\CloudDrive\\Services\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Entities\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Repo\\DB\\AI\\' => self::AGENTS_PACKAGE_CLASS,

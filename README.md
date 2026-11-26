@@ -342,11 +342,13 @@ space (created when missing). 1 to 50 files per call (`MAX_FILES_PER_IMPORT`). P
    upload; `expiresAfterDays` of the decision sets the node's expiry.
 
 `DriveImportOptions`: `hasOwnerConsent`, `isOwnDrive` (the target is the caller's own drive), `workingCopyKey` (the
-caller's working copy, which does not need to pull), `scanWaitSeconds` (how long the call waits for the scan, default
+caller's working copy; it is marked for a pull with the space's newest one), `scanWaitSeconds` (how long the call waits for the scan, default
 20). `DriveImportResult`: `importedFiles` (`DriveImportedFile`: `sourceFileReference`, `driveNode`, `path`,
 `isUnchanged`, `isMetadataRemoved`, `contentState`), `refusedLines` (one sentence per file not copied, also a file
-whose scan blocked it), `needsOwnerConsent`. A refused file never stops the others. Working copies of the space are
-asked to pull.
+whose scan blocked it), `refusedFileReferences`, `needsOwnerConsent`. A refused file never stops the others. Working
+copies of the space are asked to pull. A picture whose metadata is removed may change its format (HEIC → JPEG): the
+copy's name extension and content type follow the bytes. `findImportRefusals()` answers the refusals of the checks
+before the bytes (write right, facts, flow rule, consent) without writing anything.
 
 `CloudDriveAgentDriveStoreService::saveDriveFiles()` (beside `mgamadeus/ddd-agents` ≥ 0.7.0) goes through the import
 when a source is a reference of another file source; the owner's consent of a `WRITE_WITH_CONSENT` mount counts as the

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.4
+
+- **Fixed: an imported picture whose metadata is removed keeps a name and type that fit its bytes.** The strip writes
+  a HEIC picture as JPEG; the copy kept the source's name (`.heic`) and content type. Now the content type is read from
+  the stripped bytes and the name's extension follows it (`photo.heic` → `photo.jpg`; a fitting extension such as
+  `.jpeg` stays). `DriveImportsService::adaptNameAndTypeToBytes()`.
+- **New: `DriveImportsService::findImportRefusals()`** — the refusals of the checks before the bytes (write right, the
+  source's facts, the flow rule, a consent it asks for) without reading or writing anything;
+  `DriveImportResult::$refusedFileReferences` and `addRefusal()`. `buildImportFlowTarget()` is public.
+- **New (with ddd-agents ≥ 0.7.9): `CloudDriveAgentDriveSavePrecheckService`**, the drive's `AgentDriveSavePrecheck`:
+  `saveDriveFile` into a consent mount no longer asks the owner for a file of another source that the flow rule refuses
+  anyway (e.g. a person's own file into a shared space); the consent names only the files that can be copied. The
+  mount consent itself is unchanged. Registered only beside the port (`CloudDriveModule::AGENTS_SAVE_PRECHECK_CLASS`).
+- Skill and README corrected: the caller's working copy IS marked for a pull; a decision that asks for consent is met
+  by the agent only through a `WRITE_WITH_CONSENT` mount.
+
 ## 0.5.3
 
 - Skill `ddd-module-clouddrive-specialist`: host duties (rights extension, personal folders, the admin and content

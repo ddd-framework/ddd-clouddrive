@@ -153,6 +153,26 @@ class DriveImportsServiceTest extends TestCase
         self::assertFalse($driveImportResult->needsOwnerConsent);
     }
 
+    public function testTheRefusalsAreFoundWithoutWritingOrReadingAByte(): void
+    {
+        $driveImportResult = $this->driveImportsService->findImportRefusals(
+            FileReferences::fromFileReferences([new FileReference('media', '902'), new FileReference('media', '404'), new FileReference('media', '901')]),
+            $this->sharedSpace,
+            'Logos'
+        );
+
+        self::assertFalse($driveImportResult->hasImportedFiles());
+        self::assertSame(['media/902', 'media/404'], array_values(array_map(
+            static fn (FileReference $fileReference): string => $fileReference->toString(),
+            $driveImportResult->refusedFileReferences->getElements()
+        )));
+        self::assertCount(2, $driveImportResult->refusedLines);
+        self::assertStringStartsWith('media/902: ', $driveImportResult->refusedLines[0]);
+        self::assertSame([], $this->driveImportsService->storedBytesByFileName, 'nothing written');
+        self::assertSame([], $this->versions->driveFileWritesByName);
+        self::assertSame([], $this->workingCopies->pullRequestedKeys);
+    }
+
     public function testACopyTheOwnerHasToAllowWaitsForTheConsent(): void
     {
         $fileFlowDecision = FileFlowDecision::allow();
