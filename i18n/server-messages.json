@@ -3,9 +3,7 @@
     "format": 1,
     "package": "mgamadeus/ddd-clouddrive",
     "scanDirectories": [],
-    "excludedFiles": [
-        "/Services/DriveMediaLibraryBridgeService\\.php$"
-    ],
+    "excludedFiles": [],
     "keys": [
         {
             "key": "A drive space needs the audience INTERNAL or SHARED.",

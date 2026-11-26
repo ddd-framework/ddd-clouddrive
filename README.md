@@ -74,7 +74,7 @@ folders and versioned files whose bytes live in object storage, working copies f
   tool package `clouddrive.files` (`CloudDriveMCPPackage`: `driveStatus`, `commitDriveChanges`, `findDriveFiles`,
   `getDriveFile`, `listDriveFileEvents`, `getDriveSpace`, `organizeDriveFiles`, `createDriveFolder`,
   `trashDriveFiles`, `restoreDriveFiles`, `rescanDriveFileVersion`, `setDriveSpaceSettings`,
-  `importDriveFileToMediaLibrary`, `showDriveFolder`, `showDriveLocation`), the widgets `DriveFolder` (a folder the
+  `showDriveFolder`, `showDriveLocation`), the widgets `DriveFolder` (a folder the
   owner browses in the canvas beside the chat) and `DriveLocation` (a link into the drive screen), the skill
   `CloudDrive.Files` and the right constant `CloudDriveAccountRights::USE_DRIVE`.
 - **People and the agent write the same files** (with ddd-agents): a version a person saves beside an agent
@@ -99,10 +99,6 @@ folders and versioned files whose bytes live in object storage, working copies f
   Cache-held (redis group) for a day; the change feed alone does not do, a file in the scan holds its cursor back.
 - **Changes of a working copy** (`DriveChangesService::findChangesOfWorkingCopy()`): what one working copy changed in
   its space, newest first, optionally by event type (the nodes it created, to clean up a throwaway working copy).
-- **Media library bridge** (`DriveMediaLibraryBridgeService`): a port from the drive into the host's media library
-  (the drive may call it, never the reverse; media keeps its own storage). Default: no library. A host with one
-  overrides `isMediaLibraryAvailable()` and `importFileIntoMediaLibrary()` at the same path and reads the bytes with
-  `saveReleasedContentToFile()`; the tool `importDriveFileToMediaLibrary` refuses until then.
 
 ## Install
 

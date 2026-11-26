@@ -1,5 +1,5 @@
 ---
-decisionCriteria: "Files: the own drive (the workspace), the library and other mounted spaces (also a file area shared with partners, a file or version named only by its number); find, read facts and history, read a document's text (PDF, Word, Excel, PowerPoint) or look at its pages, commit, copy, organize, folders, trash, quota and write lock, rescan, take an image into the media library, show."
+decisionCriteria: "Files: the own drive (the workspace), the library and other mounted spaces (also a file area shared with partners, a file or version named only by its number); find, read facts and history, read a document's text (PDF, Word, Excel, PowerPoint) or look at its pages, commit, copy, organize, folders, trash, quota and write lock, rescan, show."
 shortDescription: "works with the drive: your files, the library and shared spaces"
 description: >-
   The cloud drive: the own drive is the workspace (shell, commit, conflicts), further spaces are
@@ -7,7 +7,7 @@ description: >-
   facts, versions and history (who did what) without a download, read the text of a document (PDF, Word, Excel,
   PowerPoint, OpenDocument, text) page by page and look at PDF pages as images, a space's quota, use and write lock; copy files
   between spaces, organize, create folders, trash and restore in mounted spaces, re-run a failed malware scan, set a
-  space's write lock and quota, take an image into the media library, show files as cards and open a folder beside
+  space's write lock and quota, show files as cards and open a folder beside
   the chat for the owner.
 providesWidgetTypes:
   - DriveFiles
@@ -50,10 +50,6 @@ the owner named, once; report what the result says.
 **Space settings and scans.** Whether the people a space is shared with may write, its quota and its largest file in
 megabytes (1 GB = 1024): `setDriveSpaceSettings`, only on the owner's request. A version whose scan FAILED:
 `rescanDriveFileVersion` with the version id as named, no read first.
-
-**Media library.** An image the owner wants as a picture of a record goes into the media library with
-`importDriveFileToMediaLibrary` (title, what it shows); the drive file stays. Not every application has a library: the
-tool says so.
 
 **Showing.** Files the owner should open or download: `showDriveFiles` (cards; a file opens beside the chat, a text
 file can be edited there). A folder the owner should look through, pick from or tidy: `showDriveFolder` (it opens

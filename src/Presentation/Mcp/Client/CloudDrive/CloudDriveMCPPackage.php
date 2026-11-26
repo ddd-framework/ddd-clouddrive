@@ -23,7 +23,6 @@ use DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets\DriveFolderConversat
 use DDD\Domain\CloudDrive\Entities\AI\Conversations\Widgets\DriveLocationConversationWidget;
 use DDD\Domain\CloudDrive\Entities\AI\Mounts\DriveMountedNode;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
-use DDD\Domain\CloudDrive\Entities\Media\DriveMediaImport;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNodes;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
@@ -35,7 +34,6 @@ use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\AI\CloudDriveAgentDriveStoreService;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
-use DDD\Domain\CloudDrive\Services\DriveMediaLibraryBridgeService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
@@ -46,7 +44,6 @@ use DDD\Infrastructure\Exceptions\NotFoundException;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveChangesCommitRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileEventsListRequestDto;
-use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileMediaImportRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileVersionRescanRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFolderCreateRequestDto;
 use DDD\Presentation\Mcp\Client\CloudDrive\Dtos\DriveFileGetRequestDto;
@@ -70,7 +67,7 @@ class CloudDriveMCPPackage extends MCPPackage
 {
     public static ?string $name = 'clouddrive.files';
 
-    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles, getDriveFile, listDriveFileEvents and getDriveSpace without a download, organizeDriveFiles, createDriveFolder, trashDriveFiles, restoreDriveFiles, rescanDriveFileVersion and setDriveSpaceSettings in mounted spaces, importDriveFileToMediaLibrary, showDriveFolder to open a folder beside the chat, showDriveLocation as a link.';
+    public static ?string $description = 'The cloud drive: driveStatus and commitDriveChanges for the own drive (the workspace), findDriveFiles, getDriveFile, listDriveFileEvents and getDriveSpace without a download, organizeDriveFiles, createDriveFolder, trashDriveFiles, restoreDriveFiles, rescanDriveFileVersion and setDriveSpaceSettings in mounted spaces, showDriveFolder to open a folder beside the chat, showDriveLocation as a link.';
 
     public const int DEFAULT_FIND_LIMIT = 30;
     public const int MAX_FIND_LIMIT = 100;
@@ -631,45 +628,6 @@ class CloudDriveMCPPackage extends MCPPackage
             intdiv($driveSpace->getEffectiveQuotaBytes(), $megabyte),
             intdiv($driveSpace->getEffectiveMaxFileSizeBytes(), $megabyte)
         )], 'Saved.');
-    }
-
-    /**
-     * Takes one image of the drive (JPEG, PNG, GIF, WebP, released by the malware scan) into the media library as a
-     * media item with title and description; the drive file stays as it is. Only when the owner asks. Answers the
-     * media item's id; a library that holds the bytes already answers its item.
-     *
-     * @example {"path": "drive/812", "title": "Sommeraktion Titelbild", "description": "Radfahrer am See bei Sonnenuntergang"}
-     */
-    #[MCPTool]
-    #[MCPToolEffect(MCPToolEffect::WRITE)]
-    #[MCPToolSummary('Takes one image of the drive into the media library (title, description); the file stays.')]
-    public function importDriveFileToMediaLibrary(
-        DriveFileMediaImportRequestDto $requestDto,
-        AgentDriveStoresService $agentDriveStoresService,
-        DriveMediaLibraryBridgeService $driveMediaLibraryBridgeService,
-        CloudDriveAgentDriveStoreService $cloudDriveAgentDriveStoreService,
-        AgentToolCallProvenance $callProvenance
-    ): DriveMcpResponseDto {
-        if (!$driveMediaLibraryBridgeService->isMediaLibraryAvailable()) {
-            throw new BadRequestException('This application has no media library to take drive files into: nothing was imported.');
-        }
-        $driveMountedNode = $this->requireNodeOfArgument($agentDriveStoresService, $cloudDriveAgentDriveStoreService, $callProvenance, $requestDto->path);
-        $driveNode = $driveMountedNode->driveNode;
-        $refusalReason = $driveMediaLibraryBridgeService->findImportRefusalReason($driveNode);
-        if ($refusalReason !== null) {
-            throw new BadRequestException(ucfirst($refusalReason) . ': nothing was imported.');
-        }
-        $driveMediaImport = new DriveMediaImport();
-        $driveMediaImport->title = $requestDto->title !== null && trim($requestDto->title) !== '' ? trim($requestDto->title) : null;
-        $driveMediaImport->description = $requestDto->description !== null && trim($requestDto->description) !== '' ? trim($requestDto->description) : null;
-        $driveMediaImportResult = $driveMediaLibraryBridgeService->importFileIntoMediaLibrary($driveNode, $driveMediaImport);
-        if (!$driveMediaImportResult->isImported()) {
-            throw new BadRequestException(ucfirst((string)($driveMediaImportResult->refusalReason ?? 'the media library took nothing')) . ': nothing was imported.');
-        }
-        return DriveMcpResponseDto::withLines(
-            [sprintf('- media item %d · %s', (int)$driveMediaImportResult->mediaItemId, $driveMediaImportResult->title ?? (string)$driveNode->name)],
-            $driveMediaImportResult->isAlreadyInLibrary ? 'The library held this image already.' : 'Imported into the media library.'
-        );
     }
 
     /**

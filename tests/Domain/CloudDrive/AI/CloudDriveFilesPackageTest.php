@@ -33,7 +33,7 @@ class CloudDriveFilesPackageTest extends TestCase
             $effectsByToolName[$reflectionMethod->getName()] = $effectAttributes[0]->getArguments()[0] ?? null;
         }
         foreach (['getDriveSpace' => MCPToolEffect::READ, 'listDriveFileEvents' => MCPToolEffect::READ, 'createDriveFolder' => MCPToolEffect::WRITE,
-            'rescanDriveFileVersion' => MCPToolEffect::WRITE, 'setDriveSpaceSettings' => MCPToolEffect::WRITE, 'importDriveFileToMediaLibrary' => MCPToolEffect::WRITE] as $toolName => $effect) {
+            'rescanDriveFileVersion' => MCPToolEffect::WRITE, 'setDriveSpaceSettings' => MCPToolEffect::WRITE] as $toolName => $effect) {
             self::assertSame($effect, $effectsByToolName[$toolName] ?? null, $toolName);
         }
         foreach (array_keys($effectsByToolName) as $toolName) {

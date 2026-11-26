@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.5
+
+- **Removed: the media library bridge and the tool `importDriveFileToMediaLibrary`.** A file of the drive goes into a
+  host's media library through the host's own sink over Core's file sources (`drive/<id>`); the drive needs no port for
+  it. Gone: `DriveMediaLibraryBridgeService`, `DriveMediaImport`, `DriveMediaImportResult`,
+  `DriveFileMediaImportRequestDto`, the tool and its lines in the package description, the skill `CloudDrive.Files`
+  and the README. A host that overrode the bridge or redeclared the tool removes its override with this version. The
+  host event type `IMPORTED_TO_MEDIA_LIBRARY` stays valid (`HOST_EVENT_TYPE_PATTERN`): a host's import records it.
+
 ## 0.5.4
 
 - **Fixed: an imported picture whose metadata is removed keeps a name and type that fit its bytes.** The strip writes

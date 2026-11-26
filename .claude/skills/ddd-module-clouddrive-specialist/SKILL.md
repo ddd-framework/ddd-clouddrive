@@ -3,7 +3,7 @@ name: ddd-module-clouddrive-specialist
 description: "Installs, wires and extends mgamadeus/ddd-clouddrive, the file drive of a DDD application: spaces, rights extensions, audiences, files, versions, ingest and scan, streamed bytes, working copies, renditions, transfers. Covers the file source drive (drive/<nodeId>, released version only, audience by path, personalFolders), DriveImportsService::importFiles (options, result, refusals, needsOwnerConsent, expiry, scan wait, 50 files / 50 MB), isDerivedObjectWriteAllowed, host duties (rights extension, routes CloudDriveControllerTrait and CloudDriveContentControllerTrait, partner audience), the npm screen and canvas viewer, and the agent part (CloudDriveAgentDriveStoreService, importFilesOfOtherSources). Use when adding the drive to an application, granting a team or partner access to a space, a file is not readable or stays in its scan, copying media or attachments into a drive, deciding which folders hold personal data, renditions do not start, or wiring the drive for the agent."
 metadata:
   author: mgamadeus
-  version: 0.5.4
+  version: 0.5.5
   framework: mgamadeus/ddd-clouddrive >= 0.5.0
 ---
 
