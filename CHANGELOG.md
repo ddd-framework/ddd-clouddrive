@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+- New agent skill for developers: `.claude/skills/ddd-module-clouddrive-specialist` (a map of the drive's topics to the
+  README, the rules that bite, the source `drive`, `DriveImportsService::importFiles()`, the switch
+  `isDerivedObjectWriteAllowed()`, the agent part, troubleshooting). Linked into applications by `ddd-link-skills`.
+  Documentation only.
+
 ## 0.5.1
 
 - README: section "Files of other sources" (the source `drive`, its audiences and `personalFolders`, and
