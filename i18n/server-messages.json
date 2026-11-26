@@ -40,6 +40,14 @@
             ]
         },
         {
+            "key": "An import needs at least one file reference.",
+            "text": "An import needs at least one file reference.",
+            "hint": "Error message from the server when files of another store (a media library, attachments) are copied into a drive and the request names no file at all; shown by the tool or screen that started the copy.",
+            "origins": [
+                "DriveImportsService::importFiles"
+            ]
+        },
+        {
             "key": "Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION.",
             "text": "Content for people is granted for DOWNLOAD, INLINE, THUMBNAIL or RENDITION.",
             "hint": "Error message from the server in the file manager of a drive (folders and files of a team or a shared space), shown in a toast or above the list when a file is opened in an unknown way. DOWNLOAD, INLINE, THUMBNAIL and RENDITION are technical values; keep them unchanged.",
