@@ -31,7 +31,9 @@ use DDD\Domain\CloudDrive\Services\DriveNodesService;
 use DDD\Domain\CloudDrive\Services\DriveSpacesService;
 use DDD\Domain\CloudDrive\Services\DriveVersionsService;
 use DDD\Domain\CloudDrive\Services\DriveWorkingCopiesService;
+use DDD\Domain\CloudDrive\Services\AI\External\ExternalDriveAgentStoreService;
 use DDD\Domain\Common\Entities\Files\Sources\FileReference;
+use DDD\Modules\CloudDrive\CloudDriveModule;
 use DDD\Domain\Common\Entities\Files\Sources\FileReferences;
 use DDD\Infrastructure\Exceptions\BadRequestException;
 use DDD\Infrastructure\Exceptions\ForbiddenException;
@@ -94,12 +96,22 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             );
             $agentDriveMounts->add($agentDriveMount);
         }
+        // the external drives the acting account reaches through its drive connections: read-only, checked per call
+        // (only beside AgentConnections of ddd-agents)
+        if (class_exists(CloudDriveModule::AGENT_CONNECTIONS_CLASS)) {
+            foreach ($this->getExternalDriveAgentStoreService()->buildMountsOfCall($callProvenance)->getElements() as $externalDriveMount) {
+                $agentDriveMounts->add($externalDriveMount);
+            }
+        }
         return $agentDriveMounts;
     }
 
     public function listDriveFiles(AgentToolCallProvenance $callProvenance, AgentDrivePath $agentDrivePath, ?string $cursor, int $limit): AgentDriveListing
     {
         $agentDriveMount = $this->requireMount($agentDrivePath);
+        if (ExternalDriveAgentStoreService::isExternalMount($agentDriveMount)) {
+            return $this->getExternalDriveAgentStoreService()->listDriveFiles($callProvenance, $agentDrivePath, $cursor, $limit);
+        }
         $driveSpace = $this->requireSpaceOfMount($agentDriveMount);
         $driveNode = $this->findNodeOfPath($driveSpace, $agentDrivePath);
         if ($driveNode === null) {
@@ -135,6 +147,13 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
         foreach ($agentDrivePaths as $agentDrivePath) {
             try {
                 $agentDriveMount = $this->requireMount($agentDrivePath);
+                if (ExternalDriveAgentStoreService::isExternalMount($agentDriveMount)) {
+                    $externalDriveFile = $this->getExternalDriveAgentStoreService()->findDriveFile($callProvenance, $agentDrivePath);
+                    if ($externalDriveFile !== null) {
+                        $agentDriveFiles->add($externalDriveFile);
+                    }
+                    continue;
+                }
                 $driveSpace = $this->requireSpaceOfMount($agentDriveMount);
                 // a file of the own drive the sandbox just wrote or changed is committed first, so a card shows it
                 $this->commitUncommittedSource($callProvenance, $agentDriveMount, $driveSpace, $agentDrivePath);
@@ -142,7 +161,7 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
                 if ($driveNode !== null) {
                     $agentDriveMount = $this->requireMountOfNode($this->findMountsOfReference($callProvenance, $agentDrivePath), $agentDrivePath, $driveNode);
                 }
-            } catch (NotFoundException|BadRequestException) {
+            } catch (NotFoundException|BadRequestException|ForbiddenException) {
                 continue;
             }
             if ($driveNode !== null && !$driveNode->isRoot()) {
@@ -155,6 +174,9 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
 
     public function saveDriveFiles(AgentToolCallProvenance $callProvenance, array $sourcePaths, AgentDriveMount $targetMount, string $targetFolderPath): AgentDriveSaveResult
     {
+        if (ExternalDriveAgentStoreService::isExternalMount($targetMount)) {
+            throw new BadRequestException('An external drive is read-only here: change its native documents with the document tools of the connection.');
+        }
         $targetSpace = $this->getDriveSpacesService()->requireSpaceWithRight((int)$targetMount->spaceKey, DBDriveSpace::RIGHT_WRITE);
         $targetFolderNode = $this->getDriveNodesService()->findOrCreateFolderPath($targetSpace, $targetFolderPath);
         $agentDriveSaveResult = new AgentDriveSaveResult();
@@ -169,6 +191,10 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
             }
             try {
                 $sourceMount = $this->requireMount($sourcePath);
+                if (ExternalDriveAgentStoreService::isExternalMount($sourceMount)) {
+                    $agentDriveSaveResult->refusedLines[] = $sourcePath->argument . ': a file of an external drive is not copied into this drive; read it and write what is needed';
+                    continue;
+                }
                 $sourceSpace = $this->requireSpaceOfMount($sourceMount);
                 $commitRefusal = $this->commitUncommittedSource($callProvenance, $sourceMount, $sourceSpace, $sourcePath);
                 if ($commitRefusal !== null) {
@@ -350,6 +376,9 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
     public function readDriveFileContent(AgentToolCallProvenance $callProvenance, AgentDrivePath $agentDrivePath, int $maxBytes): AgentDriveFileContent
     {
         $agentDriveMount = $this->requireMount($agentDrivePath);
+        if (ExternalDriveAgentStoreService::isExternalMount($agentDriveMount)) {
+            return $this->getExternalDriveAgentStoreService()->readDriveFileContent($callProvenance, $agentDrivePath, $maxBytes);
+        }
         $driveSpace = $this->requireSpaceOfMount($agentDriveMount);
         $this->commitUncommittedSource($callProvenance, $agentDriveMount, $driveSpace, $agentDrivePath);
         $driveNode = $this->findNodeOfPath($driveSpace, $agentDrivePath);
@@ -568,6 +597,13 @@ class CloudDriveAgentDriveStoreService extends Service implements AgentDriveStor
     protected function requireSpaceOfMount(AgentDriveMount $agentDriveMount): DriveSpace
     {
         return $this->getDriveSpacesService()->requireSpaceWithRight((int)$agentDriveMount->spaceKey, DBDriveSpace::RIGHT_READ);
+    }
+
+    protected function getExternalDriveAgentStoreService(): ExternalDriveAgentStoreService
+    {
+        /** @var ExternalDriveAgentStoreService $externalDriveAgentStoreService */
+        $externalDriveAgentStoreService = DDDService::instance()->getService(ExternalDriveAgentStoreService::class);
+        return $externalDriveAgentStoreService;
     }
 
     protected function getDriveSpaceMountResolverService(): DriveSpaceMountResolverService

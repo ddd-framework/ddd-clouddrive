@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **New (with AgentConnections of ddd-agents): external drives.** A root of a drive connection (capability FILES) is a
+  space of kind `externalDrive`, bound by a `DriveExternalSpace` row (new table `DriveExternalSpaces`); a metadata
+  mirror (`DriveExternalItems`) and materialised renditions (`DriveExternalRenditions`) serve the agent's read-only
+  mount and document reads. Authorized only through the connection (`ExternalDriveSpacesService::requireReachOfSpace`,
+  per agent space); the drive's own rights never reach an external space, not even for an unrestricted caller.
+  Registered only beside AgentConnections (`CloudDriveModule::AGENT_CONNECTIONS_CLASS`); needs the ddd-agents release
+  that ships AgentConnections. `DriveSpaces` gets no new column.
+- Installation check: the external drive tables are required only while the drive and AgentConnections are enabled.
+
 ## 0.5.5
 
 - **Removed: the media library bridge and the tool `importDriveFileToMediaLibrary`.** A file of the drive goes into a

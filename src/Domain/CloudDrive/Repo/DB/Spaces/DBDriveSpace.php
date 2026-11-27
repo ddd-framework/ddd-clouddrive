@@ -52,6 +52,16 @@ class DBDriveSpace extends DBEntity
         return $driveSpaceRightsExtensionsService->applyGrantedSpacesCondition($queryBuilder, $spaceAlias, $right, $authAccount);
     }
 
+    /**
+     * Leaves out EXTERNAL spaces (roots of a drive connection): they are never reached through the drive's own
+     * rights, not even by an unrestricted caller; their services authorize them through their connection and run
+     * with the rights switched off.
+     */
+    public static function applyExternalSpaceExclusion(DoctrineQueryBuilder &$queryBuilder, string $spaceAlias): void
+    {
+        $queryBuilder->andWhere("{$spaceAlias}.spaceKind <> :{$spaceAlias}_externalSpaceKind")->setParameter("{$spaceAlias}_externalSpaceKind", DriveSpace::EXTERNAL_SPACE_KIND);
+    }
+
     public static function getDriveSpaceRightsExtensionsService(): DriveSpaceRightsExtensionsService
     {
         /** @var DriveSpaceRightsExtensionsService $driveSpaceRightsExtensionsService */
@@ -73,7 +83,9 @@ class DBDriveSpace extends DBEntity
         if (!self::$applyRightsRestrictions) {
             return false;
         }
-        return static::applyRightsToSpaceQuery($queryBuilder, static::getBaseModelAlias(), self::RIGHT_READ);
+        static::applyExternalSpaceExclusion($queryBuilder, static::getBaseModelAlias());
+        static::applyRightsToSpaceQuery($queryBuilder, static::getBaseModelAlias(), self::RIGHT_READ);
+        return true;
     }
 
     public static function applyUpdateRightsQuery(DoctrineQueryBuilder &$queryBuilder): bool
@@ -81,7 +93,9 @@ class DBDriveSpace extends DBEntity
         if (!self::$applyRightsRestrictions) {
             return false;
         }
-        return static::applyRightsToSpaceQuery($queryBuilder, static::getBaseModelAlias(), self::RIGHT_MANAGE);
+        static::applyExternalSpaceExclusion($queryBuilder, static::getBaseModelAlias());
+        static::applyRightsToSpaceQuery($queryBuilder, static::getBaseModelAlias(), self::RIGHT_MANAGE);
+        return true;
     }
 
     public static function applyDeleteRightsQuery(DoctrineQueryBuilder &$queryBuilder): bool

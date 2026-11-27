@@ -41,6 +41,9 @@ class DriveSpace extends Entity
 
     public const string DEFAULT_SPACE_KIND = 'default';
 
+    /** @var string The kind of an EXTERNAL space: no quota or retention of ours, read-only mount, writes through the tools */
+    public const string EXTERNAL_SPACE_KIND = 'externalDrive';
+
     /** @var int|null Optional owner; decides no right and may change */
     public ?int $accountId = null;
 
@@ -105,6 +108,12 @@ class DriveSpace extends Entity
     #[NotNull]
     #[DatabaseIndex(indexType: DatabaseIndex::TYPE_NONE)]
     public ?bool $isAudienceWriteLocked = false;
+
+    /** An EXTERNAL space shows a root of a drive connection; its binding is a {@see \DDD\Domain\CloudDrive\Entities\External\DriveExternalSpace} row */
+    public function isExternal(): bool
+    {
+        return $this->spaceKind === self::EXTERNAL_SPACE_KIND;
+    }
 
     public function isShared(): bool
     {

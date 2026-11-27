@@ -166,6 +166,26 @@ installation check `driveRenditions` of ddd-agents reports it.
 - The agent side of file sources (references in the drive tools, `viewImages`, `AI.fileSources.findTools`): the tools
   skill of ddd-agents, reference `file-sources-in-the-drive-tools.md`.
 
+## External drives (with AgentConnections of ddd-agents)
+
+- A drive connection's root (capability FILES) is a space of kind `externalDrive` (`DriveSpace::EXTERNAL_SPACE_KIND`,
+  `isExternal()`); its binding to the connection and the provider's root is a `DriveExternalSpace` row (own table,
+  unique `driveSpaceId`). `DriveSpaces` itself carries no column of the feature.
+- Registered only beside AgentConnections (`CloudDriveModule::AGENT_CONNECTIONS_CLASS`, prefixes `Services\AI\External`,
+  `Services\External`, `Entities\External`, `Repo\DB\External`); every read path answers nothing while
+  `AI.agentConnections.enabled` is off. The tables `DriveExternalItems`, `DriveExternalRenditions`,
+  `DriveExternalSpaces` are required by the installation check only while the drive AND AgentConnections are enabled.
+- Authorization is the connection's alone: `ExternalDriveSpacesService::requireReachOfSpace($driveSpace, $accountId,
+  $agentSpaceId)` (owner, or a release to that agent space; the roots of that reach; FILES level not OFF). The drive's
+  own rights never reach an external space: `DBDriveSpace` read/update rights and every scoped write leave
+  `externalDrive` out, even for an unrestricted caller (`applyExternalSpaceExclusion`). The external services work
+  with the rights switched off after that check.
+- `syncSpacesOfConnection()` (listener of changed roots) keeps one space per active root and deletes the others with
+  binding, mirror and renditions. `ExternalDriveContentService`: metadata mirror (unique filesystem names per folder,
+  native views `.gdoc.md` / `.gsheet.csv` / `.gslides.md`), materialised bytes through the drive's intake.
+- Agent mounts: read-only (`ExternalDriveAgentStoreService`); writes go through the document tools of the connection.
+  The sandbox runner does not mount external drives yet.
+
 ## Troubleshooting
 
 | Symptom | Check |

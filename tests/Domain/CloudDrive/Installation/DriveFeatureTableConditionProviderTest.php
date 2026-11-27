@@ -53,6 +53,25 @@ class DriveFeatureTableConditionProviderTest extends TestCase
         }
     }
 
+    public function testTheExternalDriveTablesAreRequiredOnlyWhileTheDriveAndAgentConnectionsAreEnabled(): void
+    {
+        $driveFeatureTableConditionProviderService = new SwitchableDriveFeatureTableConditionProviderService();
+        foreach ([[false, false], [true, false], [false, true]] as [$driveEnabled, $agentConnectionsEnabled]) {
+            $driveFeatureTableConditionProviderService->driveEnabled = $driveEnabled;
+            $driveFeatureTableConditionProviderService->agentConnectionsEnabled = $agentConnectionsEnabled;
+            $agentFeatureTableConditions = $driveFeatureTableConditionProviderService->getFeatureTableConditions();
+            foreach (DriveFeatureTableConditionProviderService::EXTERNAL_DRIVE_TABLE_ENTITY_CLASSES as $entityClassName) {
+                self::assertNotNull($agentFeatureTableConditions->findReasonTableIsNotRequired($entityClassName, []), $entityClassName);
+            }
+        }
+        $driveFeatureTableConditionProviderService->driveEnabled = true;
+        $driveFeatureTableConditionProviderService->agentConnectionsEnabled = true;
+        $agentFeatureTableConditions = $driveFeatureTableConditionProviderService->getFeatureTableConditions();
+        foreach (DriveFeatureTableConditionProviderService::EXTERNAL_DRIVE_TABLE_ENTITY_CLASSES as $entityClassName) {
+            self::assertNull($agentFeatureTableConditions->findReasonTableIsNotRequired($entityClassName, []), $entityClassName);
+        }
+    }
+
     public function testTheDriveIsEnabledWhenItsObjectStoreIsConfigured(): void
     {
         $driveFeatureTableConditionProviderService = new DriveFeatureTableConditionProviderService();
@@ -77,7 +96,7 @@ class DriveFeatureTableConditionProviderTest extends TestCase
                 $databaseEntityClassNames[] = $namespaceMatch[1] . '\\' . $fileInfo->getBasename('.php');
             }
         }
-        $declaredEntityClassNames = DriveFeatureTableConditionProviderService::DRIVE_TABLE_ENTITY_CLASSES;
+        $declaredEntityClassNames = [...DriveFeatureTableConditionProviderService::DRIVE_TABLE_ENTITY_CLASSES, ...DriveFeatureTableConditionProviderService::EXTERNAL_DRIVE_TABLE_ENTITY_CLASSES];
         sort($databaseEntityClassNames);
         sort($declaredEntityClassNames);
 

@@ -32,6 +32,7 @@ use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveCommitResolutions;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Repo\DB\Spaces\DBDriveSpace;
 use DDD\Domain\CloudDrive\Services\AI\CloudDriveAgentDriveStoreService;
+use DDD\Domain\CloudDrive\Services\AI\External\ExternalDriveAgentStoreService;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
 use DDD\Domain\CloudDrive\Services\DriveChangesService;
 use DDD\Domain\CloudDrive\Services\DriveNodesService;
@@ -768,7 +769,8 @@ class CloudDriveMCPPackage extends MCPPackage
     {
         $cloudDriveMounts = new AgentDriveMounts();
         foreach ($agentDriveMounts->getElements() as $agentDriveMount) {
-            if ($agentDriveMount->storeName !== CloudDriveAgentDriveStoreService::STORE_NAME) {
+            // an external drive is searched with the document tools of its connection (the provider's search, the roots)
+            if ($agentDriveMount->storeName !== CloudDriveAgentDriveStoreService::STORE_NAME || ExternalDriveAgentStoreService::isExternalMount($agentDriveMount)) {
                 continue;
             }
             if ($spaceFilter !== null && $spaceFilter !== '' && !($spaceFilter === self::OWN_SPACE_FILTER ? $agentDriveMount->isOwnDrive : $agentDriveMount->mountName === $spaceFilter)) {

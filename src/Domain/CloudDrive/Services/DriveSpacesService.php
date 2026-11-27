@@ -334,6 +334,9 @@ class DriveSpacesService extends EntitiesService implements WorkerStateResetterI
         $queryBuilder = $driveSpaceRepoClass::createQueryBuilder(true);
         $alias = $driveSpaceRepoClass::getBaseModelAlias();
         $queryBuilder->select("{$alias}.id")->andWhere("{$alias}.id IN (:driveSpaceIds)")->setParameter('driveSpaceIds', $driveSpaceIds);
+        if ($driveSpaceRepoClass::getApplyRightsRestrictions()) {
+            $driveSpaceRepoClass::applyExternalSpaceExclusion($queryBuilder, $alias);
+        }
         $driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($queryBuilder, $alias, $right);
         $allowedSpaceIds = array_values(array_map('intval', $queryBuilder->getQuery()->getSingleColumnResult()));
         if ($right === DBDriveSpace::RIGHT_READ || $this->currentAudience === DriveSpace::AUDIENCE_INTERNAL || $allowedSpaceIds === []) {

@@ -11,12 +11,17 @@ use DDD\Domain\CloudDrive\Entities\Activities\DriveActivityEvent;
 use DDD\Domain\CloudDrive\Entities\AI\AgentSpaceDriveSpaces\AgentSpaceDriveSpace;
 use DDD\Domain\CloudDrive\Entities\Blobs\DriveBlob;
 use DDD\Domain\CloudDrive\Entities\Changes\DriveChangeEvent;
+use DDD\Domain\CloudDrive\Entities\External\DriveExternalItem;
+use DDD\Domain\CloudDrive\Entities\External\DriveExternalRendition;
+use DDD\Domain\CloudDrive\Entities\External\DriveExternalSpace;
 use DDD\Domain\CloudDrive\Entities\Nodes\DriveNode;
 use DDD\Domain\CloudDrive\Entities\Spaces\DriveSpace;
 use DDD\Domain\CloudDrive\Entities\Versions\DriveFileVersion;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopy;
 use DDD\Domain\CloudDrive\Entities\WorkingCopies\DriveWorkingCopyEntry;
+use DDD\Domain\AI\Entities\Connections\AgentConnectionsConfiguration;
 use DDD\Domain\CloudDrive\Services\DriveBlobsService;
+use DDD\Modules\CloudDrive\CloudDriveModule;
 use DDD\Infrastructure\Services\DDDService;
 use DDD\Infrastructure\Services\ObjectStorageService;
 use DDD\Infrastructure\Services\Service;
@@ -33,7 +38,7 @@ class DriveFeatureTableConditionProviderService extends Service implements Agent
     /** @var string What reads the tables, for the reason of the check */
     public const string DRIVE_FEATURE_DESCRIPTION = 'the cloud drive (its object store CloudDrive.settings.objectStorageName, OBJECT_STORAGE_<NAME>_*)';
 
-    /** @var string[] The entities whose tables only the enabled drive reads: every database entity of the package */
+    /** @var string[] The entities whose tables only the enabled drive reads: every database entity of the package but the external drive ones */
     public const array DRIVE_TABLE_ENTITY_CLASSES = [
         DriveActivityEvent::class,
         AgentSpaceDriveSpace::class,
@@ -46,6 +51,16 @@ class DriveFeatureTableConditionProviderService extends Service implements Agent
         DriveWorkingCopyEntry::class,
     ];
 
+    /** @var string What reads the external drive tables, for the reason of the check */
+    public const string EXTERNAL_DRIVE_FEATURE_DESCRIPTION = 'external drives (the cloud drive and AgentConnections of ddd-agents, AI.agentConnections.enabled)';
+
+    /** @var string[] The tables only external drives read: required while the drive AND AgentConnections are enabled */
+    public const array EXTERNAL_DRIVE_TABLE_ENTITY_CLASSES = [
+        DriveExternalItem::class,
+        DriveExternalRendition::class,
+        DriveExternalSpace::class,
+    ];
+
     public function getFeatureTableConditions(): AgentFeatureTableConditions
     {
         $agentFeatureTableConditions = new AgentFeatureTableConditions();
@@ -54,7 +69,18 @@ class DriveFeatureTableConditionProviderService extends Service implements Agent
             $driveTableCondition = AgentFeatureTableCondition::create($entityClassName, static::DRIVE_FEATURE_DESCRIPTION, $isDriveEnabled);
             $agentFeatureTableConditions->add($driveTableCondition);
         }
+        $areExternalDrivesEnabled = $isDriveEnabled && $this->areAgentConnectionsEnabled();
+        foreach (static::EXTERNAL_DRIVE_TABLE_ENTITY_CLASSES as $entityClassName) {
+            $externalDriveTableCondition = AgentFeatureTableCondition::create($entityClassName, static::EXTERNAL_DRIVE_FEATURE_DESCRIPTION, $areExternalDrivesEnabled);
+            $agentFeatureTableConditions->add($externalDriveTableCondition);
+        }
         return $agentFeatureTableConditions;
+    }
+
+    /** AgentConnections of ddd-agents is installed and switched on */
+    protected function areAgentConnectionsEnabled(): bool
+    {
+        return class_exists(CloudDriveModule::AGENT_CONNECTIONS_CLASS) && AgentConnectionsConfiguration::current()->isEnabled();
     }
 
     /**

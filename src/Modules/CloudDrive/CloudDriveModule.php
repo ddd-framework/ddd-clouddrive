@@ -26,6 +26,9 @@ class CloudDriveModule extends DDDModule
     /** @var string The file sink port of ddd-agent-browser ≥ 0.2.0: the drive's browser sink registers only beside it */
     public const string BROWSER_FILE_SINK_CLASS = 'DDD\\Domain\\AI\\Services\\Browser\\BrowserFileSink';
 
+    /** @var string A class of AgentConnections (ddd-agents): the external drives register only beside it */
+    public const string AGENT_CONNECTIONS_CLASS = 'DDD\\Domain\\AI\\Services\\Connections\\AgentConnectionReach';
+
     /**
      * @var string The table condition port of ddd-agents (>= 0.5.0, which also has the installation check port): the
      *     drive's installation check and table conditions register only beside it
@@ -63,6 +66,11 @@ class CloudDriveModule extends DDDModule
             'DDD\\Domain\\CloudDrive\\Services\\AI\\Browser\\' => self::BROWSER_FILE_SINK_CLASS,
             // a class below SavePrecheck\\ needs the save precheck port of ddd-agents >= 0.7.9
             'DDD\\Domain\\CloudDrive\\Services\\AI\\SavePrecheck\\' => self::AGENTS_SAVE_PRECHECK_CLASS,
+            // external drives (spaces of a drive connection) need AgentConnections of ddd-agents (all matching prefixes apply)
+            'DDD\\Domain\\CloudDrive\\Services\\AI\\External\\' => self::AGENT_CONNECTIONS_CLASS,
+            'DDD\\Domain\\CloudDrive\\Services\\External\\' => self::AGENT_CONNECTIONS_CLASS,
+            'DDD\\Domain\\CloudDrive\\Entities\\External\\' => self::AGENT_CONNECTIONS_CLASS,
+            'DDD\\Domain\\CloudDrive\\Repo\\DB\\External\\' => self::AGENT_CONNECTIONS_CLASS,
             'DDD\\Domain\\CloudDrive\\Services\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Entities\\AI\\' => self::AGENTS_PACKAGE_CLASS,
             'DDD\\Domain\\CloudDrive\\Repo\\DB\\AI\\' => self::AGENTS_PACKAGE_CLASS,

@@ -46,7 +46,13 @@ abstract class DBDriveSpaceScopedEntity extends DBEntity
         $spaceModelClass = $driveSpaceRepoClass::BASE_ORM_MODEL;
         $spaceQueryBuilder = $driveSpaceRepoClass::createQueryBuilder();
         $spaceQueryBuilder->select(self::RIGHTS_SPACE_ALIAS . '.id')->from($spaceModelClass, self::RIGHTS_SPACE_ALIAS);
-        if (!$driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($spaceQueryBuilder, self::RIGHTS_SPACE_ALIAS, $right)) {
+        $hasConditions = $driveSpaceRepoClass::applyRightsToSpaceQueryWhenRestricted($spaceQueryBuilder, self::RIGHTS_SPACE_ALIAS, $right);
+        if ($right !== DBDriveSpace::RIGHT_READ) {
+            // no write into an EXTERNAL space through the drive's own rights (its services write with rights off)
+            $driveSpaceRepoClass::applyExternalSpaceExclusion($spaceQueryBuilder, self::RIGHTS_SPACE_ALIAS);
+            $hasConditions = true;
+        }
+        if (!$hasConditions) {
             return false;
         }
         $alias = static::getBaseModelAlias();
