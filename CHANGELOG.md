@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- Release of 0.6.0 on npm as well: the tag v0.6.0 did not publish `@mgamadeus/ddd-clouddrive` (its `web/package.json`
+  still named 0.5.5). No code change; `mgamadeus/ddd-clouddrive` 0.6.0 and 0.6.1 are the same code.
+
 ## 0.6.0
 
 - **New (with AgentConnections of ddd-agents): external drives.** A root of a drive connection (capability FILES) is a
