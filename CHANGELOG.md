@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - **New (with AgentConnections of ddd-agents): external drives.** A root of a drive connection (capability FILES) is a
   space of kind `externalDrive`, bound by a `DriveExternalSpace` row (new table `DriveExternalSpaces`); a metadata
